@@ -21,12 +21,9 @@ namespace VRage.Animations
         void SerializeValue(XmlWriter writer, object value);
         void DeserializeValue(XmlReader reader, out object value);
         void SetValue(object val);
+        object GetValue();
         IMyConstProperty Duplicate();       
-        Type GetValueType();
-        /// <summary>
-        /// Warning, this does allocation, use only in editor!
-        /// </summary>
-        object EditorGetValue();
+        Type GetValueType();        
     }
 
     #endregion
@@ -58,7 +55,7 @@ namespace VRage.Animations
         {
         }
 
-        object IMyConstProperty.EditorGetValue()
+        object IMyConstProperty.GetValue()
         {
             return m_value;
         }             
@@ -68,7 +65,7 @@ namespace VRage.Animations
             return (U)m_value;
         }
 
-        public void SetValue(object val)
+        public virtual void SetValue(object val)
         {
             SetValue((T)val);
         }
@@ -283,7 +280,7 @@ namespace VRage.Animations
         #endregion
     }
 
-    public class MyConstPropertyEnum : MyConstPropertyInt
+    public class MyConstPropertyEnum : MyConstPropertyInt, IMyConstProperty
     {
         Type m_enumType;
         List<string> m_enumStrings;
@@ -330,6 +327,17 @@ namespace VRage.Animations
             prop.m_enumType = m_enumType;
             prop.m_enumStrings = m_enumStrings;
             return prop;
+        }
+
+        Type IMyConstProperty.GetValueType()
+        {
+            return m_enumType;
+        }
+
+        public override void SetValue(object val)
+        {            
+            int ival = Convert.ToInt32(val); // because just simple cast (int) thrown exception on ParticleTypeEnum type
+            base.SetValue(ival);
         }
     }
 

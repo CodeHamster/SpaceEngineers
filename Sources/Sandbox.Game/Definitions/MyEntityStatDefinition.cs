@@ -3,6 +3,8 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using VRage.Game;
+using VRage.Game.Definitions;
 using VRageMath;
 
 namespace Sandbox.Definitions
@@ -15,11 +17,17 @@ namespace Sandbox.Definitions
 			public float HeightMultiplier;
 			public int Priority;
 			public Vector3I Color;
+            public float CriticalRatio;
+            public bool DisplayCriticalDivider;
+            public Vector3I CriticalColorFrom;
+            public Vector3I CriticalColorTo;
 		}
 
 		public float MinValue;
 
 		public float MaxValue;
+
+	    public float DefaultValue;
 
 		public bool EnabledInCreative;
 
@@ -35,8 +43,11 @@ namespace Sandbox.Definitions
 
 			MinValue = objectBuilder.MinValue;
 			MaxValue = objectBuilder.MaxValue;
+		    DefaultValue = objectBuilder.DefaultValue;
 			EnabledInCreative = objectBuilder.EnabledInCreative;
 			Name = objectBuilder.Name;
+
+            if (float.IsNaN(DefaultValue)) DefaultValue = MaxValue;
 
 			GuiDef = new GuiDefinition();
 
@@ -45,6 +56,10 @@ namespace Sandbox.Definitions
 				GuiDef.HeightMultiplier = objectBuilder.GuiDef.HeightMultiplier;
 				GuiDef.Priority = objectBuilder.GuiDef.Priority;
 				GuiDef.Color = objectBuilder.GuiDef.Color;
+                GuiDef.CriticalRatio = objectBuilder.GuiDef.CriticalRatio;
+                GuiDef.DisplayCriticalDivider = objectBuilder.GuiDef.DisplayCriticalDivider;
+                GuiDef.CriticalColorFrom = objectBuilder.GuiDef.CriticalColorFrom;
+                GuiDef.CriticalColorTo = objectBuilder.GuiDef.CriticalColorTo;
 			}
 		}
 
@@ -54,6 +69,7 @@ namespace Sandbox.Definitions
 
 			builder.MinValue = MinValue;
 			builder.MaxValue = MaxValue;
+            builder.DefaultValue = DefaultValue;
 			builder.EnabledInCreative = EnabledInCreative;
 			builder.Name = Name;
 
@@ -61,6 +77,10 @@ namespace Sandbox.Definitions
 			builder.GuiDef.HeightMultiplier = GuiDef.HeightMultiplier;
 			builder.GuiDef.Priority = GuiDef.Priority;
 			builder.GuiDef.Color = GuiDef.Color;
+            builder.GuiDef.CriticalRatio = GuiDef.CriticalRatio;
+            builder.GuiDef.DisplayCriticalDivider = GuiDef.DisplayCriticalDivider;
+            builder.GuiDef.CriticalColorFrom = GuiDef.CriticalColorFrom;
+            builder.GuiDef.CriticalColorTo = GuiDef.CriticalColorTo;
 
 			return builder;
 		}

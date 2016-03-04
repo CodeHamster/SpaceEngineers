@@ -7,6 +7,8 @@ using VRage.Input;
 using VRage.Library.Utils;
 using VRage.Utils;
 using VRageMath;
+using Sandbox.Common.ObjectBuilders;
+using VRage.Game;
 
 namespace Sandbox.Game.Gui
 {
@@ -110,7 +112,7 @@ namespace Sandbox.Game.Gui
                     var pos = new Vector3D(MyRandom.Instance.NextFloat() * 2 - 1f, MyRandom.Instance.NextFloat() * 2 - 1f, MyRandom.Instance.NextFloat() * 2 - 1f) * 150000;
                     var vel = new Vector3(MyRandom.Instance.NextFloat() * 2 - 1f, MyRandom.Instance.NextFloat() * 2 - 1f, MyRandom.Instance.NextFloat() * 2 - 1f);
                     vel.Normalize();
-                    var ply = MyCharacter.CreateCharacter(MatrixD.CreateTranslation(pos), vel * 100 * (MyRandom.Instance.NextFloat() * 0.5f + 0.5f), "ALIEN SPACE NINJA", MyCharacter.DefaultModel, null, false);
+                    var ply = MyCharacter.CreateCharacter(MatrixD.CreateTranslation(pos), vel * 100 * (MyRandom.Instance.NextFloat() * 0.5f + 0.5f), "ALIEN SPACE NINJA", MyCharacter.DefaultModel, null, null, false);
                     m_plys.Add(ply);
                     return true;
                 });
@@ -162,7 +164,7 @@ namespace Sandbox.Game.Gui
 
                 var pos = seed.BoundingVolume.Center;
 
-                VRageRender.MyRenderProxy.DebugDrawSphere(pos, seed.Size / 2, seed.Type == MyObjectSeedType.Asteroid ? Color.Green : Color.Red, 1.0f, true);
+                VRageRender.MyRenderProxy.DebugDrawSphere(pos, seed.Size / 2, seed.Params.Type == MyObjectSeedType.Asteroid ? Color.Green : Color.Red, 1.0f, true);
                 //if ((pos - MySector.MainCamera.Position).Length() < max_distance)
                 {
                     if (m_drawRadius)

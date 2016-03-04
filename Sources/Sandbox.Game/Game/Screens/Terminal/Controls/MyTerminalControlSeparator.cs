@@ -10,7 +10,7 @@ using VRage.Utils;
 
 namespace Sandbox.Game.Gui
 {
-    class MyTerminalControlSeparator<TBlock> : MyTerminalControl<TBlock>
+    public class MyTerminalControlSeparator<TBlock> : MyTerminalControl<TBlock>
         where TBlock : MyTerminalBlock
     {
         public MyTerminalControlSeparator()
@@ -25,11 +25,6 @@ namespace Sandbox.Game.Gui
             control.OriginAlign = MyGuiDrawAlignEnum.HORISONTAL_RIGHT_AND_VERTICAL_TOP;
             control.AddHorizontal(Vector2.Zero, 1);
             return control;
-        }
-
-        protected override void OnUpdateVisual()
-        {
-            base.OnUpdateVisual();
         }
     }
 }

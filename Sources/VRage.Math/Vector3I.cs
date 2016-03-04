@@ -4,8 +4,17 @@ using System.Diagnostics;
 
 namespace VRageMath
 {
+    /**
+     * Face in a cube.
+     */
+    public enum CubeFace
+    {
+        Left, Right, Up, Down, Forward, Backward
+    }
+
     [ProtoBuf.ProtoContract, Serializable]
-    public struct Vector3I : IEquatable<Vector3I>, IComparable<Vector3I>
+    public struct 
+        Vector3I : IEquatable<Vector3I>, IComparable<Vector3I>
     {
         /// <summary>
         /// A class for simpler traversal of ranges of integer vectors
@@ -36,8 +45,11 @@ namespace VRageMath
 
             public bool IsValid()
             {
+                // MZ: assert from the past, i will leave it here
                 Debug.Assert(Current.X <= m_end.X && Current.Y <= m_end.Y, "Invalid X and Y values in the Vector3I range iterator!");
-                return Current.Z <= m_end.Z;
+                // MZ: changed validation to be safer and take in account all values (resolves crashes in voxel hands)
+                return Current.X >= m_start.X && Current.Y >= m_start.Y && Current.Z >= m_start.Z &&
+                    Current.X <= m_end.X && Current.Y <= m_end.Y && Current.Z <= m_end.Z;
             }
 
             public void GetNext(out Vector3I next)
@@ -100,7 +112,7 @@ namespace VRageMath
         public int Y;
         [ProtoBuf.ProtoMember]
         public int Z;
-        
+
         public Vector3I(int xyz)
         {
             X = xyz;
@@ -129,11 +141,25 @@ namespace VRageMath
             Z = (int)xyz.Z;
         }
 
+        public Vector3I(Vector3D xyz)
+        {
+            X = (int)xyz.X;
+            Y = (int)xyz.Y;
+            Z = (int)xyz.Z;
+        }
+
         public Vector3I(Vector3S xyz)
         {
             X = (int)xyz.X;
             Y = (int)xyz.Y;
             Z = (int)xyz.Z;
+        }
+
+        public Vector3I(float x, float y, float z)
+        {
+            X = (int)x;
+            Y = (int)y;
+            Z = (int)z;
         }
 
         public static Vector3I One = new Vector3I(1, 1, 1);
@@ -216,6 +242,11 @@ namespace VRageMath
         public int RectangularLength()
         {
             return Math.Abs(X) + Math.Abs(Y) + Math.Abs(Z);
+        }
+
+        public int Length()
+        {
+            return (int)Math.Sqrt(Vector3I.Dot(this, this));
         }
 
         public static bool BoxIntersects(Vector3I minA, Vector3I maxA, Vector3I minB, Vector3I maxB)
@@ -321,6 +352,26 @@ namespace VRageMath
         public static Vector3I operator <<(Vector3I v, int shift)
         {
             return new Vector3I(v.X << shift, v.Y << shift, v.Z << shift);
+        }
+
+        public static Vector3I operator &(Vector3I v, int mask)
+        {
+            return new Vector3I(v.X & mask, v.Y & mask, v.Z & mask);
+        }
+
+        public static Vector3I operator |(Vector3I v, int mask)
+        {
+            return new Vector3I(v.X | mask, v.Y | mask, v.Z | mask);
+        }
+
+        public static Vector3I operator ^(Vector3I v, int mask)
+        {
+            return new Vector3I(v.X ^ mask, v.Y ^ mask, v.Z ^ mask);
+        }
+
+        public static Vector3I operator ~(Vector3I v)
+        {
+            return new Vector3I(~v.X, ~v.Y, ~v.Z);
         }
 
         public static Vector3I operator *(int num, Vector3I b)
@@ -430,6 +481,73 @@ namespace VRageMath
             else if (axis == Base6Directions.Axis.LeftRight) return X;
             Debug.Assert(axis == Base6Directions.Axis.UpDown, "Invalid axis in Vector3I.AxisProjection!");
             return Y;
+        }
+
+        public static CubeFace GetDominantDirection(Vector3I val)
+        {
+            if (Math.Abs(val.X) > Math.Abs(val.Y))
+            {
+                if (Math.Abs(val.X) > Math.Abs(val.Z))
+                {
+                    if (val.X > 0) return CubeFace.Right;
+                    else return CubeFace.Left;
+                }
+                else
+                {
+                    if (val.Z > 0) return CubeFace.Backward;
+                    else return CubeFace.Forward;
+                }
+            }
+            else
+            {
+                if (Math.Abs(val.Y) > Math.Abs(val.Z))
+                {
+                    if (val.Y > 0) return CubeFace.Up;
+                    else return CubeFace.Down;
+                }
+                else
+                {
+                    if (val.Z > 0) return CubeFace.Backward;
+                    else return CubeFace.Forward;
+                }
+            }
+        }
+
+        public static Vector3I GetDominantDirectionVector(Vector3I val)
+        {
+            if (Math.Abs(val.X) > Math.Abs(val.Y))
+            {
+                val.Y = 0;
+                if (Math.Abs(val.X) > Math.Abs(val.Z))
+                {
+                    val.Z = 0;
+                    if (val.X > 0) val.X = 1;
+                    else val.X = -1;
+                }
+                else
+                {
+                    val.X = 0;
+                    if (val.Z > 0) val.Z = 1;
+                    else val.Z = -1;
+                }
+            }
+            else
+            {
+                val.X = 0;
+                if (Math.Abs(val.Y) > Math.Abs(val.Z))
+                {
+                    val.Z = 0;
+                    if (val.Y > 0) val.Y = 1;
+                    else val.Y = -1;
+                }
+                else
+                {
+                    val.Y = 0;
+                    if (val.Z > 0) val.Z = 1;
+                    else val.Z = -1;
+                }
+            }
+            return val;
         }
 
         /// <summary>
@@ -626,6 +744,20 @@ namespace VRageMath
             return result;
         }
 
+        public static Vector3I Transform(Vector3I value, ref MatrixI transformation)
+        {
+            Vector3I result;
+            Transform(ref value, ref transformation, out result);
+            return result;
+        }
+
+        public static Vector3I TransformNormal(Vector3I value, ref MatrixI transformation)
+        {
+            Vector3I result;
+            TransformNormal(ref value, ref transformation, out result);
+            return result;
+        }
+
         /// <summary>
         /// Transforms a vector normal by a matrix.
         /// </summary>
@@ -738,6 +870,37 @@ namespace VRageMath
         public static int Dot(ref Vector3I vector1, ref Vector3I vector2)
         {
             return (vector1.X * vector2.X + vector1.Y * vector2.Y + vector1.Z * vector2.Z);
+        }
+
+        public static void Dot(ref Vector3I vector1, ref Vector3I vector2, out int dot)
+        {
+            dot = (vector1.X * vector2.X + vector1.Y * vector2.Y + vector1.Z * vector2.Z);
+        }
+
+        public static bool TryParseFromString(string p, out Vector3I vec)
+        {
+            var vals = p.Split(';');
+
+            if (vals.Length != 3)
+            {
+                Debug.Fail("Bad serialized vector");
+                vec = Vector3I.Zero;
+                return false;
+            }
+
+            try{
+                vec.X = Int32.Parse(vals[0]);
+                vec.Y = Int32.Parse(vals[1]);
+                vec.Z = Int32.Parse(vals[2]);
+            }
+            catch (FormatException e)
+            {
+                Debug.Fail(e.Message);
+                vec = Vector3I.Zero;
+                return false;
+            }
+
+            return true;
         }
     }
 }

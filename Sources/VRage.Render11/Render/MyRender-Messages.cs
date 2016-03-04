@@ -89,7 +89,10 @@ namespace VRageRender
                     if (m_processStopwatch.Elapsed.TotalSeconds > 0.5f)
                     {
                         //Debug.WriteLine("DoEvents()");
-                        Application.DoEvents();
+                        if (MyRenderProxy.EnableAppEventsCall)
+                        {
+                            Application.DoEvents();
+                        }
                         m_processStopwatch.Reset();
                     }
                     m_processStopwatch.Start();
@@ -112,7 +115,7 @@ namespace VRageRender
                     if (msg == null)
                         continue;
 
-                    if ((filter == null || filter(msg.MessageType)) && msg.MessageClass != MyRenderMessageType.Draw)
+                    if ((filter == null || filter(msg.MessageType)) && msg.MessageClass != MyRenderMessageType.Draw && msg.MessageClass != MyRenderMessageType.DebugDraw)
                     {
                         processCtr++;
                         ProcessMessage(msg);
@@ -124,7 +127,10 @@ namespace VRageRender
                         if (m_processStopwatch.Elapsed.TotalSeconds > 0.5f)
                         {
                             //Debug.WriteLine("DoEvents()");
-                            Application.DoEvents();
+                            if (MyRenderProxy.EnableAppEventsCall)
+                            {
+                                Application.DoEvents();
+                            }
                             m_processStopwatch.Reset();
                         }
                         m_processStopwatch.Start();

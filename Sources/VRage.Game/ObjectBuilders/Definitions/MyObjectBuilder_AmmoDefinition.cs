@@ -1,14 +1,9 @@
 ﻿using ProtoBuf;
 using VRage.ObjectBuilders;
-using System;
-using System.Collections.Generic;
 using System.ComponentModel;
-using System.Linq;
-using System.Text;
-using System.Xml.Serialization;
 using VRage.Utils;
 
-namespace Sandbox.Common.ObjectBuilders.Definitions
+namespace VRage.Game
 {
     public enum MyAmmoType
     {
@@ -19,7 +14,7 @@ namespace Sandbox.Common.ObjectBuilders.Definitions
         Plasma,
         Basic,
     }
-     
+
     public static class MyDamageType 
     {
         public static MyStringHash Unknown       = MyStringHash.GetOrCompute("Unknown");
@@ -41,6 +36,7 @@ namespace Sandbox.Common.ObjectBuilders.Definitions
         public static MyStringHash Asphyxia      = MyStringHash.GetOrCompute("Asphyxia");
         public static MyStringHash LowPressure   = MyStringHash.GetOrCompute("LowPressure");
         public static MyStringHash Bolt          = MyStringHash.GetOrCompute("Bolt");
+        public static MyStringHash Destruction   = MyStringHash.GetOrCompute("Destruction");
     }
 
     public enum MyCustomHitMaterialMethodType

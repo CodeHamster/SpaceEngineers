@@ -1,13 +1,9 @@
 ﻿using VRage.ObjectBuilders;
 using ProtoBuf;
-using Sandbox.Common.ObjectBuilders.Voxels;
-using Sandbox.Common.ObjectBuilders.VRageData;
-using VRage.Utils;
 using VRageMath;
 using System.Xml.Serialization;
-using VRage;
 
-namespace Sandbox.Common.ObjectBuilders.Definitions
+namespace VRage.Game
 {
     [ProtoContract]
     [MyObjectBuilderDefinition]
@@ -16,6 +12,9 @@ namespace Sandbox.Common.ObjectBuilders.Definitions
     {
         [ProtoMember]
         public AsteroidClustersSettings AsteroidClusters;
+
+        [ProtoMember]
+        public MyEnvironmentHostilityEnum DefaultEnvironment = MyEnvironmentHostilityEnum.NORMAL;
 
         [ProtoMember]
         [XmlArrayItem("StartingState", Type = typeof(MyAbstractXmlSerializer<MyObjectBuilder_WorldGeneratorPlayerStartingState>))]
@@ -30,14 +29,54 @@ namespace Sandbox.Common.ObjectBuilders.Definitions
         public string[] CreativeModeWeapons;
 
         [ProtoMember]
+        [XmlArrayItem("Component")]
+        public StartingItem[] CreativeModeComponents;
+        
+        [ProtoMember]
+        [XmlArrayItem("PhysicalItem")]
+        public StartingPhysicalItem[] CreativeModePhysicalItems;
+
+        [ProtoMember]
+        [XmlArrayItem("AmmoItem")]
+        public StartingItem[] CreativeModeAmmoItems;
+
+        [ProtoMember]
         [XmlArrayItem("Weapon")]
         public string[] SurvivalModeWeapons;
+
+        [ProtoMember]
+        [XmlArrayItem("Component")]
+        public StartingItem[] SurvivalModeComponents;
+
+        [ProtoMember]
+        [XmlArrayItem("PhysicalItem")]
+        public StartingPhysicalItem[] SurvivalModePhysicalItems;
+
+        [ProtoMember]
+        [XmlArrayItem("AmmoItem")]
+        public StartingItem[] SurvivalModeAmmoItems;
 
         [ProtoMember]
         public SerializableBoundingBoxD WorldBoundaries;
 
         [ProtoMember]
-        public MyObjectBuilder_Toolbar DefaultToolbar;
+        public MyObjectBuilder_Toolbar DefaultToolbar
+        {
+            get { return null; }
+            set { CreativeDefaultToolbar = SurvivalDefaultToolbar = value; }
+        }
+        public bool ShouldSerializeDefaultToolbar() { return false; }
+
+        [ProtoMember]
+        public MyObjectBuilder_Toolbar CreativeDefaultToolbar
+        {
+            get { return m_creativeDefaultToolbar; }
+            set { m_creativeDefaultToolbar = value; }
+        }
+        private MyObjectBuilder_Toolbar m_creativeDefaultToolbar;
+
+        [ProtoMember]
+        public MyObjectBuilder_Toolbar SurvivalDefaultToolbar;
 
         [ProtoMember]
         public MyOBBattleSettings Battle;
@@ -45,7 +84,11 @@ namespace Sandbox.Common.ObjectBuilders.Definitions
         [ProtoMember]
         public string MainCharacterModel;
 
+        [ProtoMember]
+        public long GameDate = 656385372000000000; // Default game date for Space Engineers
 
+        [ProtoMember]
+        public SerializableVector3 SunDirection = Vector3.Invalid;
 
         [ProtoContract]
         public struct AsteroidClustersSettings
@@ -63,6 +106,29 @@ namespace Sandbox.Common.ObjectBuilders.Definitions
         }
 
         [ProtoContract]
+        public struct StartingItem
+        {
+            [ProtoMember, XmlAttribute]
+            public float amount;
+
+            [ProtoMember, XmlText]
+            public string itemName;
+        }
+
+        [ProtoContract]
+        public struct StartingPhysicalItem
+        {
+            [ProtoMember, XmlAttribute]
+            public float amount;
+
+            [ProtoMember, XmlText]
+            public string itemName;
+
+            [ProtoMember, XmlAttribute]
+            public string itemType;
+        }
+
+        [ProtoContract]
         public class MyOBBattleSettings
         {
             [ProtoMember]
@@ -77,13 +143,11 @@ namespace Sandbox.Common.ObjectBuilders.Definitions
         }
     }
 
-
-
     [MyObjectBuilderDefinition]
     [XmlType("StartingState")]
     public abstract class MyObjectBuilder_WorldGeneratorPlayerStartingState : MyObjectBuilder_Base
     {
-
+        public string FactionTag = null;
     }
 
     [MyObjectBuilderDefinition]
@@ -116,7 +180,8 @@ namespace Sandbox.Common.ObjectBuilders.Definitions
     [XmlType("Operation")]
     public abstract class MyObjectBuilder_WorldGeneratorOperation : MyObjectBuilder_Base
     {
-
+        [ProtoMember]
+        public string FactionTag = null;
     }
 
     [MyObjectBuilderDefinition]
@@ -151,6 +216,9 @@ namespace Sandbox.Common.ObjectBuilders.Definitions
         [ProtoMember]
         public MyPositionAndOrientation Transform;
 
+        [ProtoMember]
+        public bool UseFirstGridOrigin = false;
+
         [ProtoMember, XmlAttribute]
         public float RandomRadius;
         public bool ShouldSerializeRandomRadius() { return RandomRadius != 0f; }
@@ -181,14 +249,35 @@ namespace Sandbox.Common.ObjectBuilders.Definitions
     public class MyObjectBuilder_WorldGeneratorOperation_AddPlanetPrefab : MyObjectBuilder_WorldGeneratorOperation
     {
         [ProtoMember, XmlAttribute]
-        public string PrefabFile;
+        public string PrefabName;
 
         [ProtoMember, XmlAttribute]
-        public string Name;
+        public string DefinitionName;
+
+        [ProtoMember, XmlAttribute]
+        public bool AddGPS = false;
+
+        [ProtoMember]
+        public SerializableVector3D Position;
     }
 
+    [MyObjectBuilderDefinition]
+    [XmlType("CreatePlanet")]
+    public class MyObjectBuilder_WorldGeneratorOperation_CreatePlanet : MyObjectBuilder_WorldGeneratorOperation
+    {
+        [ProtoMember, XmlAttribute]
+        public string DefinitionName;
 
+        [ProtoMember, XmlAttribute]
+        public bool AddGPS = false;
 
+        [ProtoMember]
+        public SerializableVector3D PositionMinCorner;
 
+        [ProtoMember]
+        public SerializableVector3D PositionCenter = new SerializableVector3D(Vector3.Invalid);
 
+        [ProtoMember]
+        public float Diameter;
+    }
 }

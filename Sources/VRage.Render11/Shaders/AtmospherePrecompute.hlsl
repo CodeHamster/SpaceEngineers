@@ -1,39 +1,35 @@
 cbuffer Constants : register( b1 )
 {
+	float3  PlanetCenter;
 	float 	RadiusGround;
-	float 	RadiusAtmosphere;
-	float2 	HeightScaleRayleighMie;
+
 	float3 	BetaRayleighScattering;
-	float 	RadiusLimit;
+	float 	RadiusAtmosphere;
+
 	float3 	BetaMieScattering;
+	float   MieG;
+
+	float2 	HeightScaleRayleighMie;
+	float	PlanetScaleFactor;
+	float   AtmosphereScaleFactor;
+
+	float   Intensity;
+	float3  __padding;
 }
 
-RWTexture2D<float4> Output0 : register( u0 );
-RWTexture3D<float4> Output3D_0 : register( u0 );
-RWTexture3D<float4> Output3D_1 : register( u1 );
+RWTexture2D<float2> Output0 : register( u0 );
 
-static const float BetaRatio = 0.9f;
-
-Texture2D<float4> DensityLut : register( t0 );
-
+#define ATMOSPHERE_PRECOMPUTE
 #include <common.h>
 #include <AtmosphereCommon.h>
 
 [numthreads(8, 8, 1)]
-void precomputeDensity(uint3 dispatchThreadID : SV_DispatchThreadID) {
-	float2 uv = (float2)(dispatchThreadID.xy) / (float2(256, 64) - 1);
-	
-	Output0[dispatchThreadID.xy] = float4(PrecomputeNetDensityToAtmTopPS(uv), 0, 0);
+void __compute_shader(uint3 dispatchThreadID : SV_DispatchThreadID) 
+{
+	float2 uv = (float2)(dispatchThreadID.xy) / (float2(512, 128) - 1);
+
+	float3 P1, P2;
+	GetPointsFromUv(uv, P1, P2);
+	float2 opticalDepth = ComputeOpticalDepth(P1, P2, 100);
+	Output0[dispatchThreadID.xy] = opticalDepth;
 }
-
-[numthreads(8, 8, 1)]
-void precomputeInscatter1(uint3 dispatchThreadID : SV_DispatchThreadID) {
-	uint3 xyzCoord = dispatchThreadID;
-	xyzCoord.z = xyzCoord.z % 32;
-
-	float4 uvwq = float4(xyzCoord, dispatchThreadID.z / 32) / (PRECOMPUTED_SCTR_LUT_DIM - 1);
-
-	Output3D_0[dispatchThreadID] = float4(PrecomputeSingleScattering(uvwq, 64), 1);
-	//Output3D_1[dispatchThreadID] = float4(mie, 0);
-}
-

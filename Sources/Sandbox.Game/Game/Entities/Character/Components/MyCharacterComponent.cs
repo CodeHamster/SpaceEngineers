@@ -25,7 +25,6 @@ using Sandbox.Game.SessionComponents;
 using Sandbox.Game.Weapons;
 using Sandbox.Game.World;
 using Sandbox.Graphics.GUI;
-using Sandbox.Graphics.TransparentGeometry.Particles;
 using Sandbox.ModAPI;
 using Sandbox.ModAPI.Interfaces;
 using System;
@@ -35,7 +34,7 @@ using System.Linq;
 using System.Text;
 using VRage;
 using VRage.Audio;
-using VRage.Components;
+using VRage.Game.Components;
 using VRage.FileSystem;
 using VRage.Game.Entity.UseObject;
 using VRage.Game.ObjectBuilders;
@@ -57,6 +56,9 @@ namespace Sandbox.Game.Entities.Character
 
         private bool m_needsUpdateAfterSimulation;
 
+        /// <summary>
+        /// This set's flag for update. Set it after add to container!
+        /// </summary>
         public bool NeedsUpdateAfterSimulation
         {
             get { return m_needsUpdateAfterSimulation; }
@@ -65,6 +67,9 @@ namespace Sandbox.Game.Entities.Character
 
         private bool m_needsUpdateAfterSimulation10;
 
+        /// <summary>
+        /// This set's flag for update. Set it after add to container!
+        /// </summary>
         public bool NeedsUpdateAfterSimulation10
         {
             get { return m_needsUpdateAfterSimulation10; }
@@ -73,6 +78,9 @@ namespace Sandbox.Game.Entities.Character
 
         private bool m_needsUpdateBeforeSimulation100;
 
+        /// <summary>
+        /// This set's flag for update. Set it after add to container!
+        /// </summary>
         public bool NeedsUpdateBeforeSimulation100
         {
             get { return m_needsUpdateBeforeSimulation100; }
@@ -81,6 +89,9 @@ namespace Sandbox.Game.Entities.Character
 
         private bool m_needsUpdateBeforeSimulation;
 
+        /// <summary>
+        /// This set's flag for update. Set it after add to container!
+        /// </summary>
         public bool NeedsUpdateBeforeSimulation
         {
             get { return m_needsUpdateBeforeSimulation; }

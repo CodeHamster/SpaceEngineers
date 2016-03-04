@@ -71,7 +71,7 @@
     <NoStdLib>true</NoStdLib>
     <DebugType>full</DebugType>
     <PlatformTarget>x64</PlatformTarget>
-    <UseVSHostingProcess>false</UseVSHostingProcess>
+    <UseVSHostingProcess>true</UseVSHostingProcess>
     <GenerateSerializationAssemblies>Auto</GenerateSerializationAssemblies>
     <ErrorReport>prompt</ErrorReport>
     <CodeAnalysisRuleSet>MinimumRecommendedRules.ruleset</CodeAnalysisRuleSet>
@@ -84,7 +84,7 @@
     <NoWarn>162,612,618,429,414,169,649</NoWarn>
     <NoStdLib>true</NoStdLib>
     <PlatformTarget>x64</PlatformTarget>
-    <UseVSHostingProcess>false</UseVSHostingProcess>
+    <UseVSHostingProcess>true</UseVSHostingProcess>
     <ErrorReport>prompt</ErrorReport>
     <CodeAnalysisRuleSet>MinimumRecommendedRules.ruleset</CodeAnalysisRuleSet>
   </PropertyGroup>
@@ -102,6 +102,7 @@
     <PlatformTarget>x86</PlatformTarget>
     <ErrorReport>prompt</ErrorReport>
     <CodeAnalysisRuleSet>MinimumRecommendedRules.ruleset</CodeAnalysisRuleSet>
+    <UseVSHostingProcess>true</UseVSHostingProcess>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Release Official|x64'">
     <OutputPath>$(SolutionDir)Output\DedicatedServer64\</OutputPath>
@@ -111,7 +112,7 @@
     <NoWarn>162,612,618,429,414,169,649</NoWarn>
     <NoStdLib>true</NoStdLib>
     <PlatformTarget>x64</PlatformTarget>
-    <UseVSHostingProcess>false</UseVSHostingProcess>
+    <UseVSHostingProcess>true</UseVSHostingProcess>
     <ErrorReport>prompt</ErrorReport>
     <CodeAnalysisRuleSet>MinimumRecommendedRules.ruleset</CodeAnalysisRuleSet>
   </PropertyGroup>
@@ -187,6 +188,10 @@
     <ProjectReference Include="..\SpaceEngineers.Game\SpaceEngineers.Game.csproj">
       <Project>{9f620aab-5008-4d91-8d8f-8be6cf26f926}</Project>
       <Name>SpaceEngineers.Game</Name>
+    </ProjectReference>
+    <ProjectReference Include="..\SpaceEngineers.ObjectBuilders\SpaceEngineers.ObjectBuilders.csproj">
+      <Project>{e48feb99-6814-4947-8035-8c2b4066dd9b}</Project>
+      <Name>SpaceEngineers.ObjectBuilders</Name>
     </ProjectReference>
     <ProjectReference Include="..\VRage.Dedicated\VRage.Dedicated.csproj">
       <Project>{ba24cf8d-109d-4728-be1d-ad13af824093}</Project>

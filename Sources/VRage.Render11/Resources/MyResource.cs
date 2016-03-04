@@ -73,7 +73,13 @@ namespace VRageRender.Resources
             {
                 for (int m = 0; m < mipmaps; m++)
                 {
-                    MyRender11.Context.CopySubresourceRegion(MyTextures.Textures.Data[mergeList[a].Index].Resource, Resource.CalculateSubResourceIndex(m, 0, mipmaps), null, Resource,
+
+                    if (((Texture2D)MyTextures.Textures.Data[mergeList[a].Index].Resource).Description.Format != ((Texture2D)Resource).Description.Format)
+                    {
+                        MyRender11.Log.WriteLine(String.Format("Inconsistent format in textures array {0}", MyTextures.Textures.Data[mergeList[a].Index].Name));
+                    }
+
+                    MyRender11.DeviceContext.CopySubresourceRegion(MyTextures.Textures.Data[mergeList[a].Index].Resource, Resource.CalculateSubResourceIndex(m, 0, mipmaps), null, Resource,
                         Resource.CalculateSubResourceIndex(m, a, mipmaps));
                 }
             }
@@ -90,6 +96,22 @@ namespace VRageRender.Resources
             }
 
             base.Dispose();
+        }
+
+        internal static MyTextureArray FromStringArray(string[] mergeList, MyTextureEnum type)
+        {
+            if (mergeList == null)
+            {
+                return null;
+            }
+
+            TexId[] ids = new TexId[mergeList.Length];
+            for (int i = 0; i < ids.Length; i++)
+            {
+                ids[i] = MyTextures.GetTexture(mergeList[i], type, true);
+            }
+
+            return new MyTextureArray(ids);
         }
     }
 }
@@ -183,9 +205,10 @@ namespace VRageRender
 
         internal static readonly StructuredBufferId NULL = new StructuredBufferId { Index = -1 };
 
-
         internal Buffer Buffer { get { return MyHwBuffers.GetBuffer(this); } }
         internal int Capacity { get { return MyHwBuffers.GetBufferDesc(this).SizeInBytes / MyHwBuffers.GetBufferDesc(this).StructureByteStride; } }
+        internal int Stride { get { return MyHwBuffers.GetBufferDesc(this).StructureByteStride; } }
+        internal bool Dynamic { get { return MyHwBuffers.GetBufferDesc(this).Usage == ResourceUsage.Dynamic; } }
         internal int ByteSize { get { return MyHwBuffers.GetBufferDesc(this).SizeInBytes; } }
         internal ShaderResourceView Srv { get { return MyHwBuffers.GetView(this); } }
     }
@@ -218,6 +241,11 @@ namespace VRageRender
     {
         internal Buffer Buffer;
         internal ShaderResourceView Srv;
+    }
+
+    struct MyBufferStats {
+        public int TotalBuffers;
+        public int TotalBytes;
     }
 
     static class MyHwBuffers
@@ -273,6 +301,17 @@ namespace VRageRender
             return CBuffersData[id.Index].Buffer;
         }
 
+        internal static void GetConstantBufferStats(out MyBufferStats stats)
+        {
+            stats.TotalBytes = 0;
+            stats.TotalBuffers = CBuffers.Size;
+
+            for (int i = 0; i < CBuffers.Size; i++)
+            {
+                stats.TotalBytes += CBuffers.Data[i].Description.SizeInBytes;
+            }
+        }
+
         #endregion
 
         #region Vertex buffer
@@ -288,6 +327,8 @@ namespace VRageRender
 
         internal static VertexBufferId CreateVertexBuffer(int elements, int stride, BindFlags bind, ResourceUsage usage, IntPtr? data = null, string debugName = null)
         {
+            if (elements == 0) return VertexBufferId.NULL;
+
             bind |= BindFlags.VertexBuffer;
 
             BufferDescription desc = new BufferDescription();
@@ -299,17 +340,19 @@ namespace VRageRender
             return CreateVertexBuffer(desc, stride, data, debugName);
         }
 
-        internal static VertexBufferId CreateVertexBuffer(BufferDescription description, int stride, IntPtr ? data = null, string debugName = null)
+        internal static VertexBufferId CreateVertexBuffer(BufferDescription description, int stride, IntPtr? data = null, string debugName = null)
         {
+            if (description.SizeInBytes == 0) return VertexBufferId.NULL;
+
             var id = new VertexBufferId { Index = VBuffers.Allocate() };
-            
+
             MyArrayHelpers.Reserve(ref VBuffersData, id.Index + 1);
             VBuffers.Data[id.Index] = new MyHwBufferDesc { Description = description, DebugName = debugName };
             VBuffersData[id.Index] = new MyVertexBufferData { Stride = stride };
 
             VbIndices.Add(id);
 
-            if(!data.HasValue)
+            if (!data.HasValue)
             {
                 InitVertexBuffer(id);
             }
@@ -339,7 +382,28 @@ namespace VRageRender
             VBuffers.Data[id.Index].Description.SizeInBytes = VBuffersData[id.Index].Stride * size;
             InitVertexBuffer(id);
         }
-
+        internal static void ResizeAndUpdateStaticVertexBuffer(ref VertexBufferId id, int capacity, int stride, IntPtr data, string debugName = null)
+        {
+            if (id == VertexBufferId.NULL)
+            {
+                id = CreateVertexBuffer(capacity, stride, data, debugName);
+            }
+            else 
+            {
+                Debug.Assert(stride == id.Stride);
+                
+                if (id.Capacity != capacity)
+                {
+                    VBuffersData[id.Index].Buffer.Dispose();
+                    VBuffers.Data[id.Index].Description.SizeInBytes = VBuffersData[id.Index].Stride * capacity;
+                    InitVertexBuffer(id, data);
+                }
+                else
+                {
+                    UpdateVertexBuffer(id, data);
+                }
+            }
+        }
         internal static void InitVertexBuffer(VertexBufferId id)
         {
             VBuffersData[id.Index].Buffer = new Buffer(MyRender11.Device, VBuffers.Data[id.Index].Description);
@@ -356,6 +420,11 @@ namespace VRageRender
             {
                 VBuffersData[id.Index].Buffer.DebugName = VBuffers.Data[id.Index].DebugName;
             }
+        }
+
+        internal static void UpdateVertexBuffer(VertexBufferId id, IntPtr data)
+        {
+            MyRender11.DeviceContext.UpdateSubresource(new DataBox(data), VBuffersData[id.Index].Buffer);
         }
 
         internal static Buffer GetVertexBuffer(VertexBufferId id)
@@ -376,6 +445,17 @@ namespace VRageRender
         internal static BufferDescription GetBufferDesc(VertexBufferId id)
         {
             return VBuffers.Data[id.Index].Description;
+        }
+
+        internal static void GetVertexBufferStats(out MyBufferStats stats)
+        {
+            stats.TotalBytes = 0;
+            stats.TotalBuffers = VBuffers.Size;
+            
+            for (int i = 0; i < VBuffers.Size; i++)
+            {
+                stats.TotalBytes += VBuffers.Data[i].Description.SizeInBytes;
+            }
         }
 
         #endregion
@@ -471,6 +551,17 @@ namespace VRageRender
             return IBuffers.Data[id.Index].Description;
         }
 
+        internal static void GetIndexBufferStats(out MyBufferStats stats)
+        {
+            stats.TotalBytes = 0;
+            stats.TotalBuffers = IBuffers.Size;
+
+            for (int i = 0; i < IBuffers.Size; i++)
+            {
+                stats.TotalBytes += IBuffers.Data[i].Description.SizeInBytes;
+            }
+        }
+
         #endregion
 
         #region Structured buffer
@@ -533,7 +624,30 @@ namespace VRageRender
                 SBuffersData[id.Index].Srv.DebugName = SBuffers.Data[id.Index].DebugName;
             }
         }
-
+        internal static void ResizeAndUpdateStaticStructuredBuffer(ref StructuredBufferId id, int capacity, int stride, IntPtr data, string debugName = null, DeviceContext context = null)
+        {
+            if (id == StructuredBufferId.NULL)
+            {
+                id = CreateStructuredBuffer(capacity, stride, false, data, debugName);
+            }
+            else 
+            {
+                Debug.Assert(stride == id.Stride);
+                Debug.Assert(false == id.Dynamic);
+                if (id.Capacity < capacity)
+                {
+                    SBuffersData[id.Index].Buffer.Dispose();
+                    SBuffers.Data[id.Index].Description.SizeInBytes = stride * capacity;
+                    InitStructuredBuffer(id, data);
+                }
+                else
+                {
+                    if (context == null)
+                        context = MyRender11.DeviceContext;
+                    context.UpdateSubresource(new DataBox(data, stride * capacity, 0), id.Buffer);
+                }
+            }
+        }
         internal static void Destroy(StructuredBufferId id)
         {
             SbIndices.Remove(id);
@@ -563,6 +677,17 @@ namespace VRageRender
         internal static BufferDescription GetBufferDesc(StructuredBufferId id)
         {
             return SBuffers.Data[id.Index].Description;
+        }
+
+        internal static void GetStructuredBufferStats(out MyBufferStats stats)
+        {
+            stats.TotalBytes = 0;
+            stats.TotalBuffers = SBuffers.Size;
+
+            for (int i = 0; i < SBuffers.Size; i++)
+            {
+                stats.TotalBytes += SBuffers.Data[i].Description.SizeInBytes;
+            }
         }
 
         #endregion

@@ -1,18 +1,16 @@
 ﻿using Sandbox.Game.Entities;
 using Sandbox.Game.Entities.Cube;
-using Sandbox.Game.GameSystems.Electricity;
 using Sandbox.Game.Multiplayer;
-using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.Linq;
-using System.Text;
-using VRage;
+using Sandbox.Game.EntityComponents;
+using VRage.Utils;
 using VRageMath;
+using VRage.Game.Entity;
 
 namespace Sandbox.Game.GameSystems
 {
-    public class MyGridWheelSystem : IMyPowerConsumer
+    public class MyGridWheelSystem
     {
         #region Fields
         public Vector3 AngularVelocity;
@@ -25,11 +23,8 @@ namespace Sandbox.Game.GameSystems
         #endregion
 
         #region Properties
-        public MyPowerReceiver PowerReceiver
-        {
-            get;
-            private set;
-        }
+
+	    public  MyResourceSinkComponent SinkComp;
 
         public int WheelCount { get { return m_wheels.Count; } }
 
@@ -75,12 +70,10 @@ namespace Sandbox.Game.GameSystems
             m_wheels = new HashSet<MyMotorSuspension>();
             m_wheelsChanged = false;
             m_grid = grid;
-            PowerReceiver = new MyPowerReceiver(
-                MyConsumerGroupEnum.Utility,
-                false,
-                m_maxRequiredPowerInput,
-                () => m_maxRequiredPowerInput);
-            PowerReceiver.IsPoweredChanged += Receiver_IsPoweredChanged;
+
+			SinkComp = new MyResourceSinkComponent();
+			SinkComp.Init(MyStringHash.GetOrCompute("Utility"), m_maxRequiredPowerInput, () => m_maxRequiredPowerInput);
+            SinkComp.IsPoweredChanged += Receiver_IsPoweredChanged;
 
             grid.OnPhysicsChanged += grid_OnPhysicsChanged;
         }
@@ -153,8 +146,8 @@ namespace Sandbox.Game.GameSystems
                 m_maxRequiredPowerInput += motor.RequiredPowerInput;
             }
 
-            PowerReceiver.MaxRequiredInput = m_maxRequiredPowerInput;
-            PowerReceiver.Update();
+            SinkComp.MaxRequiredInput = m_maxRequiredPowerInput;
+			SinkComp.Update();
         }
 
         private bool IsUsed(MyMotorSuspension motor)
@@ -181,7 +174,7 @@ namespace Sandbox.Game.GameSystems
 
         internal void InitControl()
         {
-            if (Sandbox.Game.World.MySession.ControlledEntity != null)
+            if (Sandbox.Game.World.MySession.Static.ControlledEntity != null)
                 foreach (var motor in m_wheels)
                     motor.InitControl();
         }

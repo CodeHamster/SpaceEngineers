@@ -19,6 +19,7 @@ namespace VRageRender
 
         CreateRenderEntity,
         CreateRenderEntityAtmosphere,
+        CreateRenderEntityClouds,
         AddRuntimeModel,
         PreloadModel,
         PreloadMaterials,
@@ -40,6 +41,8 @@ namespace VRageRender
         RemoveRenderObject,
         UseCustomDrawMatrix,
         UpdateModelProperties,
+        UpdateModelHighlight,
+        UpdateColorEmissivity,
         UpdateVoxelMaterialsProperties,
         ChangeModel,
         ChangeModelMaterial,
@@ -50,6 +53,7 @@ namespace VRageRender
         DrawTextToMaterial,
         ReleaseRenderTexture,
 
+        UpdateGameplayFrame,
 
         CreateClipmap,
         RequireClipmapCell, //Output
@@ -58,7 +62,13 @@ namespace VRageRender
         InvalidateClipmapRange,
         ClipmapsReady, // Output
 
+        UpdateMergedVoxelMesh,
+        MergeVoxelMeshes,   // Output
+        CancelVoxelMeshMerge,   // Output
+        ResetMergedVoxels,
+
         CreateRenderVoxelMaterials,
+        UpdateRenderVoxelMaterials,
         CreateRenderVoxelDebris,
 
         RebuildCullingStructure,
@@ -71,6 +81,7 @@ namespace VRageRender
         ReloadEffects,
         ReloadModels,
         ReloadTextures,
+        ReloadGrass,
 
         UpdatePostprocessSettings,
         UpdateRenderEnvironment,
@@ -84,6 +95,10 @@ namespace VRageRender
         UpdateColorMappingSettings,
         UpdateContrastSettings,
         UpdateChromaticAberrationSettings,
+        UpdateAtmosphereSettings,
+        UpdatePlanetBlurSettings,
+        EnableAtmosphere,
+        UpdateCloudLayerFogFlag,
 
         PlayVideo,
         UpdateVideo,
@@ -112,6 +127,9 @@ namespace VRageRender
         SetTextureIgnoreQuality,
         UpdateRenderQuality,
 
+        RequestScreenData,
+        ScreenDataReady,    // Output
+
         TakeScreenshot,
         ScreenshotTaken, //Output
         ExportToObjComplete, //Output
@@ -122,6 +140,7 @@ namespace VRageRender
         //UpdateCharacterAnimation,
         SetCharacterTransforms,
 
+        /* Debug Draw Messages */
         DebugDrawLine3D,
         DebugDrawLine2D,
         DebugDrawPoint,
@@ -129,6 +148,7 @@ namespace VRageRender
         DebugDrawAABB,
         DebugDrawAxis,
         DebugDrawOBB,
+        DebugDrawFrustrum,
         DebugDrawTriangle,
         DebugDrawCapsule,
         DebugDrawText2D,
@@ -139,6 +159,10 @@ namespace VRageRender
         DebugDrawPlane,
         DebugDrawCylinder,
         DebugDrawCone,
+        DebugDrawMesh,
+        DebugDraw6FaceConvex,
+        DebugWaitForPresent,
+
 
         UnloadData,
 
@@ -158,5 +182,7 @@ namespace VRageRender
         CreatedDeviceSettings, // Output
         SwitchDeviceSettings,
         SwitchRenderSettings,
+
+        SetMouseCapture
     }
 }

@@ -13,6 +13,11 @@ using Sandbox.Game.Multiplayer;
 using Sandbox.ModAPI;
 using Sandbox.Game.Entities;
 using Sandbox.Game.GameSystems;
+using Sandbox.Engine.Networking;
+using Sandbox.Engine.Utils;
+using VRage.Game;
+using VRage.Game.Components;
+using VRage.Game.Entity;
 
 namespace Sandbox.Game.SessionComponents
 {
@@ -86,7 +91,11 @@ namespace Sandbox.Game.SessionComponents
             if (!mtrig.Won)
                 mtrig.UpdateLose(player, entity);
             else
+            {
                 m_someoneWon = true;
+                MyAnalyticsHelper.ReportTutorialEnd();
+                MyTutorialHelper.MissionSuccess();
+            }
             return mtrig.Lost;
         }
 
@@ -115,7 +124,6 @@ namespace Sandbox.Game.SessionComponents
             MyMissionTriggers mtrig;
             if (!Static.MissionTriggers.TryGetValue(Id, out mtrig))
             {
-                Debug.Fail("Bad ID for CanRespawn");
                 return true;
             }
             return !mtrig.Lost;
@@ -124,8 +132,8 @@ namespace Sandbox.Game.SessionComponents
         #region displaying win/lose message on local computer
         private void UpdateLocal()
         {
-            if (!MySandboxGame.IsDedicated && MySession.LocalHumanPlayer != null)
-                UpdateLocal(MySession.LocalHumanPlayer);
+            if (!MySandboxGame.IsDedicated && MySession.Static.LocalHumanPlayer != null)
+                UpdateLocal(MySession.Static.LocalHumanPlayer);
         }
         private void UpdateLocal(MyPlayer player)
         {
@@ -185,7 +193,7 @@ namespace Sandbox.Game.SessionComponents
         #endregion
         private bool IsLocal(MyPlayer.PlayerId Id)
         {
-            if (!MySandboxGame.IsDedicated && MySession.LocalHumanPlayer!=null && Id == MySession.LocalHumanPlayer.Id)
+            if (!MySandboxGame.IsDedicated && MySession.Static.LocalHumanPlayer!=null && Id == MySession.Static.LocalHumanPlayer.Id)
                 return true;
             return false;
         }

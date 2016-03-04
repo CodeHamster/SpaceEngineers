@@ -438,6 +438,103 @@ namespace VRageMath
             return string.Format((IFormatProvider)currentCulture, "{{X:{0} Y:{1} Z:{2}}}", (object)this.X.ToString((IFormatProvider)currentCulture), (object)this.Y.ToString((IFormatProvider)currentCulture), (object)this.Z.ToString((IFormatProvider)currentCulture));
         }
 
+        public static bool TryParse(string str, out Vector3D retval)
+        {
+            retval = Vector3D.Zero;
+            if (str == null) return false;
+
+            int openBraces = 0;
+            int start = 0;
+            int parsedValues = 0;
+            bool success = true;
+
+            for (int i = 0; i < str.Length; ++i)
+            {
+                if (str[i] == '{')
+                {
+                    openBraces++;
+                }
+                else if (str[i] == ':')
+                {
+                    if (openBraces == 1)
+                    {
+                        start = i + 1;
+                    }
+                    else
+                    {
+                        success = false;
+                    }
+                }
+                else if (str[i] == ' ')
+                {
+                    if (openBraces == 1)
+                    {
+                        int len = i - start;
+                        string substr = str.Substring(start, len);
+                        double val = 0.0f;
+                        if (!double.TryParse(substr, out val)) success = false;
+
+                        if (parsedValues == 0)
+                        {
+                            retval.X = val;
+                        }
+                        else if (parsedValues == 1)
+                        {
+                            retval.Y = val;
+                        }
+                        else if (parsedValues == 2)
+                        {
+                            retval.Z = val;
+                        }
+                        else
+                        {
+                            success = false;
+                        }
+
+                        parsedValues++;
+                    }
+                }
+                else if (str[i] == '}')
+                {
+                    openBraces--;
+
+                    if (openBraces != 0)
+                    {
+                        success = false;
+                    }
+                    else
+                    {
+                        int len = i - start;
+                        string substr = str.Substring(start, len);
+                        double val = 0.0f;
+                        if (!double.TryParse(substr, out val)) success = false;
+
+                        if (parsedValues == 0)
+                        {
+                            retval.X = val;
+                        }
+                        else if (parsedValues == 1)
+                        {
+                            retval.Y = val;
+                        }
+                        else if (parsedValues == 2)
+                        {
+                            retval.Z = val;
+                        }
+                        else
+                        {
+                            success = false;
+                        }
+
+                        parsedValues++;
+                    }
+                }
+            }
+            if (openBraces != 0) success = false;
+
+            return success;
+        }
+
         public string ToString(string format)
         {
             CultureInfo currentCulture = CultureInfo.CurrentCulture;
@@ -1431,6 +1528,25 @@ namespace VRageMath
         }
 
         /// <summary>
+        /// Transforms a source array of Vector3s by a specified Matrix and writes the results to an existing destination array.
+        /// </summary>
+        /// <param name="sourceArray">The source array.</param>
+        /// <param name="matrix">The transform Matrix to apply.</param>
+        /// <param name="destinationArray">An existing destination array into which the transformed Vector3s are written.</param>
+        public static unsafe void Transform(Vector3D[] sourceArray, ref MatrixD matrix, Vector3D* destinationArray)
+        {
+            for (int index = 0; index < sourceArray.Length; ++index)
+            {
+                double num1 = sourceArray[index].X;
+                double num2 = sourceArray[index].Y;
+                double num3 = sourceArray[index].Z;
+                destinationArray[index].X = (double)((double)num1 * (double)matrix.M11 + (double)num2 * (double)matrix.M21 + (double)num3 * (double)matrix.M31) + matrix.M41;
+                destinationArray[index].Y = (double)((double)num1 * (double)matrix.M12 + (double)num2 * (double)matrix.M22 + (double)num3 * (double)matrix.M32) + matrix.M42;
+                destinationArray[index].Z = (double)((double)num1 * (double)matrix.M13 + (double)num2 * (double)matrix.M23 + (double)num3 * (double)matrix.M33) + matrix.M43;
+            }
+        }
+
+        /// <summary>
         /// Applies a specified transform Matrix to a specified range of an array of Vector3s and writes the results into a specified range of a destination array.
         /// </summary>
         /// <param name="sourceArray">The source array.</param><param name="sourceIndex">The index in the source array at which to start.</param><param name="matrix">The transform Matrix to apply.</param><param name="destinationArray">The existing destination array.</param><param name="destinationIndex">The index in the destination array at which to start.</param><param name="length">The number of Vector3s to transform.</param>
@@ -1454,6 +1570,25 @@ namespace VRageMath
         /// </summary>
         /// <param name="sourceArray">The array of Vector3 normals to transform.</param><param name="matrix">The transform matrix to apply.</param><param name="destinationArray">An existing Vector3 array into which the results of the transforms are written.</param>
         public static void TransformNormal(Vector3D[] sourceArray, ref Matrix matrix, Vector3D[] destinationArray)
+        {
+            for (int index = 0; index < sourceArray.Length; ++index)
+            {
+                double num1 = sourceArray[index].X;
+                double num2 = sourceArray[index].Y;
+                double num3 = sourceArray[index].Z;
+                destinationArray[index].X = (double)((double)num1 * (double)matrix.M11 + (double)num2 * (double)matrix.M21 + (double)num3 * (double)matrix.M31);
+                destinationArray[index].Y = (double)((double)num1 * (double)matrix.M12 + (double)num2 * (double)matrix.M22 + (double)num3 * (double)matrix.M32);
+                destinationArray[index].Z = (double)((double)num1 * (double)matrix.M13 + (double)num2 * (double)matrix.M23 + (double)num3 * (double)matrix.M33);
+            }
+        }
+
+        /// <summary>
+        /// Transforms an array of 3D vector normals by a specified Matrix.
+        /// </summary>
+        /// <param name="sourceArray">The array of Vector3 normals to transform.</param>
+        /// <param name="matrix">The transform matrix to apply.</param>
+        /// <param name="destinationArray">An existing Vector3 array into which the results of the transforms are written.</param>
+        public static unsafe void TransformNormal(Vector3D[] sourceArray, ref Matrix matrix, Vector3D* destinationArray)
         {
             for (int index = 0; index < sourceArray.Length; ++index)
             {
@@ -1845,6 +1980,28 @@ namespace VRageMath
         public static implicit operator Vector3D(Vector3 v)
         {
             return new Vector3D((double)v.X, (double)v.Y, (double)v.Z);
+        }
+
+        public static Vector3I Round(Vector3D vect3d)
+        {
+            return new Vector3I((vect3d + .5));
+        }
+
+        public static Vector3I Floor(Vector3D vect3d)
+        {
+            return new Vector3I((int)Math.Floor(vect3d.X), (int)Math.Floor(vect3d.Y), (int)Math.Floor(vect3d.Z));
+        }
+
+        public static void Fract(ref Vector3D o, out Vector3D r)
+        {
+            r.X = o.X - Math.Floor(o.X);
+            r.Y = o.Y - Math.Floor(o.Y);
+            r.Z = o.Z - Math.Floor(o.Z);
+        }
+
+        public static Vector3D Round(Vector3D v, int numDecimals)
+        {
+            return new Vector3D(Math.Round(v.X, numDecimals), Math.Round(v.Y, numDecimals), Math.Round(v.Z, numDecimals));
         }
     }
 

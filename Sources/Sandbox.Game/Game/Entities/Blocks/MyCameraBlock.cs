@@ -1,11 +1,9 @@
-﻿using Sandbox.Common;
-using Sandbox.Common.ObjectBuilders;
+﻿using Sandbox.Common.ObjectBuilders;
 using Sandbox.Definitions;
 using Sandbox.Engine.Multiplayer;
 using Sandbox.Engine.Utils;
 using Sandbox.Game.Entities.Cube;
 using Sandbox.Game.GameSystems;
-using Sandbox.Game.GameSystems.Electricity;
 using Sandbox.Game.Gui;
 using Sandbox.Game.GUI;
 using Sandbox.Game.Localization;
@@ -18,29 +16,26 @@ using SteamSDK;
 using System;
 using System.Collections.Generic;
 using System.Text;
+using Sandbox.Game.EntityComponents;
 using VRage;
+using VRage.Game;
 using VRage.Input;
 using VRage.ModAPI;
 using VRage.Utils;
 using VRageMath;
+using VRage.Game.Components;
 
 namespace Sandbox.Game.Entities
 {
     [MyCubeBlockType(typeof(MyObjectBuilder_CameraBlock))]
-    class MyCameraBlock : MyFunctionalBlock, IMyPowerConsumer, IMyCameraController, IMyCameraBlock
+    class MyCameraBlock : MyFunctionalBlock, IMyCameraController, IMyCameraBlock
     {
         public new MyCameraBlockDefinition BlockDefinition
         {
             get { return (MyCameraBlockDefinition)base.BlockDefinition; }
         }
 
-        public MyPowerReceiver PowerReceiver
-        {
-            get;
-            protected set;
-        }
-
-        private const float MIN_FOV = 0.01f;
+        private const float MIN_FOV = 0.00001f;
         private const float MAX_FOV = 3.12413936f;
 
         private float m_fov;
@@ -55,8 +50,10 @@ namespace Sandbox.Game.Entities
         }
         public bool ForceFirstPersonCamera { get; set; }
 
-        private static MyHudNotification m_hudNotification;
+        private static readonly MyHudNotification m_hudNotification;
         private bool m_requestActivateAfterLoad = false;
+
+        readonly Sync<float> m_syncFov;
 
         static MyCameraBlock()
         {
@@ -74,6 +71,11 @@ namespace Sandbox.Game.Entities
             var controlName = MyInput.Static.GetGameControl(MyControlsSpace.USE).GetControlButtonName(MyGuiInputDeviceEnum.Keyboard);
             m_hudNotification = new MyHudNotification(MySpaceTexts.NotificationHintPressToExitCamera);
             m_hudNotification.SetTextFormatArguments(controlName);
+        }
+
+        public MyCameraBlock()
+        {
+            m_syncFov.ValueChanged += (x) => OnSyncFov();
         }
 
         public bool CanUse()
@@ -94,6 +96,11 @@ namespace Sandbox.Game.Entities
 
                 CubeGrid.GridSystems.CameraSystem.SetAsCurrent(this);
                 SetView();
+                if (MyGuiScreenTerminal.IsOpen)
+                {
+                    MyGuiScreenTerminal.Hide();
+                }
+
             }
         }
 
@@ -109,11 +116,7 @@ namespace Sandbox.Game.Entities
                 oldCamera.IsActive = false;
             }
 
-            MySession.SetCameraController(MyCameraControllerEnum.Entity, this);
-            if (MyGuiScreenTerminal.IsOpen)
-            {
-                MyGuiScreenTerminal.Hide();
-            }
+            MySession.Static.SetCameraController(MyCameraControllerEnum.Entity, this);
 
             SetFov(m_fov);
 
@@ -132,20 +135,22 @@ namespace Sandbox.Game.Entities
         {
             SyncFlag = true;
 
+            var sinkComp = new MyResourceSinkComponent();
+            sinkComp.Init(
+                MyStringHash.GetOrCompute(BlockDefinition.ResourceSinkGroup),
+                BlockDefinition.RequiredPowerInput,
+                CalculateRequiredPowerInput);
+
+            sinkComp.IsPoweredChanged += Receiver_IsPoweredChanged;
+            sinkComp.RequiredInputChanged += Receiver_RequiredInputChanged;
+
+            ResourceSink = sinkComp;
+
             base.Init(objectBuilder, cubeGrid);
             NeedsUpdate = MyEntityUpdateEnum.EACH_FRAME | MyEntityUpdateEnum.EACH_10TH_FRAME;
+            sinkComp.Update();
 
             var ob = objectBuilder as MyObjectBuilder_CameraBlock;
-
-            PowerReceiver = new MyPowerReceiver(
-                MyConsumerGroupEnum.Utility,
-                false,
-                BlockDefinition.RequiredPowerInput,
-                this.CalculateRequiredPowerInput);
-
-            PowerReceiver.IsPoweredChanged += Receiver_IsPoweredChanged;
-            PowerReceiver.RequiredInputChanged += Receiver_RequiredInputChanged;
-            PowerReceiver.Update();
 
             SlimBlock.ComponentStack.IsFunctionalChanged += ComponentStack_IsFunctionalChanged;
             IsWorkingChanged += MyCameraBlock_IsWorkingChanged;
@@ -192,7 +197,7 @@ namespace Sandbox.Game.Entities
             base.UpdateAfterSimulation10();
             if (MyFakes.ENABLE_CAMERA_BLOCK)
             {
-                PowerReceiver.Update();
+                ResourceSink.Update();
             }
         }
 
@@ -200,18 +205,18 @@ namespace Sandbox.Game.Entities
         {
             base.OnAddedToScene(source);
             UpdateEmissivity();
-            PowerReceiver.Update();
+			ResourceSink.Update();
         }
 
         public void OnExitView()
         {
             IsActive = false;
-            SyncObject.SendNewFov(m_fov);
+            m_syncFov.Value =  m_fov;
         }
 
         protected override void OnEnabledChanged()
         {
-            PowerReceiver.Update();
+			ResourceSink.Update();
             UpdateEmissivity();
             
             base.OnEnabledChanged();
@@ -228,7 +233,7 @@ namespace Sandbox.Game.Entities
 
         void ComponentStack_IsFunctionalChanged()
         {
-            PowerReceiver.Update();
+			ResourceSink.Update();
         }
         
         void Receiver_IsPoweredChanged()
@@ -246,7 +251,7 @@ namespace Sandbox.Game.Entities
 
         protected override bool CheckIsWorking()
         {
-            return PowerReceiver.IsPowered && base.CheckIsWorking();
+			return ResourceSink.IsPowered && base.CheckIsWorking();
         }
 
         private void UpdateEmissivity()
@@ -261,7 +266,7 @@ namespace Sandbox.Game.Entities
             }
         }
 
-        void Receiver_RequiredInputChanged(MyPowerReceiver receiver, float oldRequirement, float newRequirement)
+        void Receiver_RequiredInputChanged(MyDefinitionId resourceTypeId, MyResourceSinkComponent receiver, float oldRequirement, float newRequirement)
         {
             UpdateText();
         }
@@ -269,7 +274,7 @@ namespace Sandbox.Game.Entities
         void UpdateText()
         {
             DetailedInfo.Clear();
-            DetailedInfo.AppendStringBuilder(MyTexts.Get(MySpaceTexts.BlockPropertiesText_Type));
+            DetailedInfo.AppendStringBuilder(MyTexts.Get(MyCommonTexts.BlockPropertiesText_Type));
             DetailedInfo.Append(BlockDefinition.DisplayNameText);
             DetailedInfo.Append("\n");
             DetailedInfo.AppendStringBuilder(MyTexts.Get(MySpaceTexts.BlockPropertiesText_MaxRequiredInput));
@@ -364,7 +369,7 @@ namespace Sandbox.Game.Entities
             MyGuiAudio.PlaySound(MyGuiSounds.HudClick);
             CubeGrid.GridSystems.CameraSystem.ResetCamera();
 
-            if (MySession.ControlledEntity is MyRemoteControl)
+            if (MySession.Static.ControlledEntity is MyRemoteControl)
             {
                 return false;
             }
@@ -404,16 +409,6 @@ namespace Sandbox.Game.Entities
             SetFov(m_fov);
         }
 
-        internal new MySyncCameraBlock SyncObject
-        {
-            get { return (MySyncCameraBlock)base.SyncObject; }
-        }
-
-        protected override MySyncEntity OnCreateSync()
-        {
-            return new MySyncCameraBlock(this);
-        }
-
         internal void OnChangeFov(float newFov)
         {
             m_fov = newFov;
@@ -424,56 +419,11 @@ namespace Sandbox.Game.Entities
             m_targetFov = m_fov;
         }
 
-        [PreloadRequired]
-        internal class MySyncCameraBlock : MySyncEntity
+        void OnSyncFov()
         {
-            [MessageId(7800, P2PMessageEnum.Reliable)]
-            struct ChangeFovMsg : IEntityMessage
+            if (IsActive == false)
             {
-                public long EntityId;
-                public long GetEntityId() { return EntityId; }
-
-                public float Fov;
-            }
-
-            public new MyCameraBlock Entity
-            {
-                get { return (MyCameraBlock)base.Entity; }
-            }
-
-            static MySyncCameraBlock()
-            {
-                MySyncLayer.RegisterEntityMessage<MySyncCameraBlock, ChangeFovMsg>(OnChangeFovRequest, MyMessagePermissions.ToServer, MyTransportMessageEnum.Request);
-                MySyncLayer.RegisterEntityMessage<MySyncCameraBlock, ChangeFovMsg>(OnChangeFovSuccess, MyMessagePermissions.FromServer, MyTransportMessageEnum.Success);
-            }
-
-            public MySyncCameraBlock(MyCameraBlock cameraBlock)
-                : base(cameraBlock)
-            {
-            }
-
-            public void SendNewFov(float fov)
-            {
-                var msg = new ChangeFovMsg();
-
-                msg.EntityId = Entity.EntityId;
-                msg.Fov = fov;
-
-                Sync.Layer.SendMessageToServer(ref msg, MyTransportMessageEnum.Request);
-            }
-
-            private static void OnChangeFovRequest(MySyncCameraBlock syncObject, ref ChangeFovMsg message, MyNetworkClient sender)
-            {
-                Sync.Layer.SendMessageToAllAndSelf(ref message, MyTransportMessageEnum.Success);
-            }
-
-            private static void OnChangeFovSuccess(MySyncCameraBlock syncObject, ref ChangeFovMsg message, MyNetworkClient sender)
-            {
-                //Don't change fov while someone is using it
-                if (!syncObject.Entity.IsActive)
-                {
-                    syncObject.Entity.OnChangeFov(message.Fov);
-                }
+                OnChangeFov(m_syncFov);
             }
         }
     }

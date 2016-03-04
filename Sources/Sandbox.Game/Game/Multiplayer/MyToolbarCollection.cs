@@ -17,6 +17,8 @@ using VRage.Serialization;
 using PlayerId = Sandbox.Game.World.MyPlayer.PlayerId;
 
 using Sandbox.Definitions;
+using VRage.Game;
+using VRage.Game.Definitions;
 
 namespace Sandbox.Game.Multiplayer
 {
@@ -159,10 +161,7 @@ namespace Sandbox.Game.Multiplayer
         static void OnNewToolbarRequest(ref PlayerToolbarCreatedMsg msg, MyNetworkClient sender)
         {
             var playerId = new MyPlayer.PlayerId(sender.SteamUserId, msg.PlayerSerialId);
-            if (MySession.Static.Toolbars.ContainsToolbar(playerId))
-                return;
-            var toolbar = new MyToolbar(MyToolbarType.Character);
-            MySession.Static.Toolbars.AddPlayerToolbar(playerId, toolbar);
+            MySession.Static.Toolbars.CreateDefaultToolbar(playerId);
         }
 
         private Dictionary<PlayerId, MyToolbar> m_playerToolbars = new Dictionary<PlayerId, MyToolbar>();
@@ -252,6 +251,15 @@ namespace Sandbox.Game.Multiplayer
                     checkpointData[pid].Toolbar = toolbar.Value.GetObjectBuilder();
                 }
             }
+        }
+
+        private void CreateDefaultToolbar(PlayerId playerId)
+        {
+            if (ContainsToolbar(playerId))
+                return;
+            var toolbar = new MyToolbar(MyToolbarType.Character);
+            toolbar.Init(MySession.Static.Scenario.DefaultToolbar, null, true);
+            AddPlayerToolbar(playerId, toolbar);
         }
     }
 }

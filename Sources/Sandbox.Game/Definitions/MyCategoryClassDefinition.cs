@@ -4,6 +4,8 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using VRage.Game;
+using VRage.Game.Definitions;
 
 namespace Sandbox.Definitions
 {
@@ -11,7 +13,7 @@ namespace Sandbox.Definitions
     public class MyGuiBlockCategoryDefinition : MyDefinitionBase
     {
         public string Name;
-        public List<string> ItemIds;
+        public HashSet<string> ItemIds;
         public bool IsShipCategory = false;
         public bool IsBlockCategory = true;
         public bool SearchBlocks = true;
@@ -34,7 +36,7 @@ namespace Sandbox.Definitions
 
             MyObjectBuilder_GuiBlockCategoryDefinition builder = (ob as MyObjectBuilder_GuiBlockCategoryDefinition);
             this.Name = builder.Name;
-            this.ItemIds = builder.ItemIds.ToList();
+            this.ItemIds = new HashSet<string>(builder.ItemIds.ToList());
             this.IsBlockCategory = builder.IsBlockCategory;
             this.IsShipCategory = builder.IsShipCategory;
             this.SearchBlocks = builder.SearchBlocks;

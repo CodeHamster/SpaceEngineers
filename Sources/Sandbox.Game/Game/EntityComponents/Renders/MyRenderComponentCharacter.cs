@@ -2,40 +2,41 @@
 using Sandbox.Common.ObjectBuilders;
 using Sandbox.Common.ObjectBuilders.Definitions;
 using Sandbox.Definitions;
-using Sandbox.Engine.Utils;
-using Sandbox.Game.Components;
-using Sandbox.Game.Entities.Cube;
 using Sandbox.Game.Entities;
-using Sandbox.Game.GameSystems.Electricity;
-using Sandbox.Game.Gui;
-using Sandbox.Game.GUI;
 using Sandbox.Game.Lights;
-using Sandbox.Game.Screens.Helpers;
-using Sandbox.Game.Utils;
-using Sandbox.Game.Weapons;
 using Sandbox.Game.World;
 using Sandbox.Graphics;
-using Sandbox.Graphics.GUI;
-using Sandbox.Graphics.TransparentGeometry;
-using Sandbox.Graphics.TransparentGeometry.Particles;
-using Sandbox.ModAPI.Interfaces;
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
-using VRage;
+using Havok;
+using Sandbox.Engine.Physics;
+using Sandbox.Engine.Utils;
+using Sandbox.Engine.Voxels;
 using VRage.Utils;
 using VRageMath;
-using VRageRender;
 using Sandbox.Game.Entities.Character;
-using Sandbox.Common.Components;
-using Sandbox.ModAPI;
-using VRage.Components;
+using Sandbox.Game.GameSystems;
+using Sandbox.Game.Utils;
 using VRage.ModAPI;
+using VRage.Animations;
+using VRage.Game;
 
 namespace Sandbox.Game.Components
 {
     class MyRenderComponentCharacter : MyRenderComponentSkinnedEntity
     {
+		private MyStringHash m_characterMaterial = MyStringHash.GetOrCompute("Character");
+	    private int m_lastWalkParticleCheckTime;
+	    private int m_walkParticleSpawnCounterMs = 1000;
+	    private const int m_walkParticleGravityDelay = 10000;
+	    private const int m_walkParticleJetpackOffDelay = 2000;
+	    private const int m_walkParticleDefaultDelay = 1000;
+
+	    public MyRenderComponentCharacter()
+	    {
+		    m_lastWalkParticleCheckTime = MySandboxGame.TotalGamePlayTimeInMilliseconds;
+	    }
+
         #region Jetpack thrust
 
         public class MyJetpackThrust
@@ -57,8 +58,88 @@ namespace Sandbox.Game.Components
         List<MyJetpackThrust> m_jetpackThrusts = new List<MyJetpackThrust>(8);
 
         #endregion
-        
-        public List<MyJetpackThrust> JetpackThrusts
+
+		#region Walking effects
+
+	    internal void TrySpawnWalkingParticles(ref HkContactPointEvent value)
+	    {
+		    if (!MyFakes.ENABLE_WALKING_PARTICLES)
+			    return;
+            
+		    var oldCheckTime = m_lastWalkParticleCheckTime;
+		    m_lastWalkParticleCheckTime = MySandboxGame.TotalGamePlayTimeInMilliseconds;
+		    m_walkParticleSpawnCounterMs -= m_lastWalkParticleCheckTime - oldCheckTime;
+		    if (m_walkParticleSpawnCounterMs > 0)
+			    return;
+
+			var naturalGravityMultiplier = MyGravityProviderSystem.CalculateHighestNaturalGravityMultiplierInPoint(Entity.PositionComp.WorldMatrix.Translation);
+		    if (naturalGravityMultiplier <= 0f)
+		    {
+			    m_walkParticleSpawnCounterMs = m_walkParticleGravityDelay;
+			    return;
+		    }
+
+		    var character = Entity as MyCharacter;
+		    if (character.JetpackComp != null && character.JetpackComp.Running)
+		    {
+			    m_walkParticleSpawnCounterMs = m_walkParticleJetpackOffDelay;
+			    return;
+		    }
+
+		    var currentMovementState = character.GetCurrentMovementState();
+		    if (currentMovementState.GetDirection() == MyCharacterMovement.NoDirection || currentMovementState == MyCharacterMovementEnum.Falling)
+		    {
+			    m_walkParticleSpawnCounterMs = m_walkParticleDefaultDelay;
+			    return;
+		    }
+
+		    var otherPhysicsBody = value.GetOtherEntity(character).Physics as MyVoxelPhysicsBody;//value.Base.BodyA.UserObject == character.Physics ? value.Base.BodyB.UserObject : value.Base.BodyA.UserObject)) as MyVoxelPhysicsBody;
+		    if (otherPhysicsBody == null)
+			    return;
+	       
+			MyStringId movementType;
+
+		    const int walkParticleWalkDelay = 500;
+			const int walkParticleRunDelay = 275;
+			const int walkParticleSprintDelay = 250;
+		    switch (currentMovementState.GetSpeed())
+		    {
+			    case MyCharacterMovement.NormalSpeed:
+				    movementType = MyMaterialPropertiesHelper.CollisionType.Walk;
+				    m_walkParticleSpawnCounterMs = walkParticleWalkDelay;
+				    break;
+				case MyCharacterMovement.Fast:
+					movementType = MyMaterialPropertiesHelper.CollisionType.Run;
+				    m_walkParticleSpawnCounterMs = walkParticleRunDelay;
+				    break;
+				case MyCharacterMovement.VeryFast:
+					movementType = MyMaterialPropertiesHelper.CollisionType.Sprint;
+				    m_walkParticleSpawnCounterMs = walkParticleSprintDelay;
+				    break;
+				default:
+				    movementType = MyMaterialPropertiesHelper.CollisionType.Walk;
+				    m_walkParticleSpawnCounterMs = m_walkParticleDefaultDelay;
+				    break;
+
+		    }
+
+            var spawnPosition = otherPhysicsBody.ClusterToWorld(value.ContactPoint.Position);
+
+            MyVoxelMaterialDefinition voxelMaterialDefinition = otherPhysicsBody.m_voxelMap.GetMaterialAt(ref spawnPosition);
+		    if (voxelMaterialDefinition == null)
+			    return;
+
+		    MyMaterialPropertiesHelper.Static.TryCreateCollisionEffect(
+				movementType,
+				spawnPosition,
+				value.ContactPoint.Normal,
+				m_characterMaterial,
+				MyStringHash.GetOrCompute(voxelMaterialDefinition.MaterialTypeName));
+	    }
+
+		#endregion
+
+		public List<MyJetpackThrust> JetpackThrusts
         {
             get { return m_jetpackThrusts; }           
         }
@@ -197,7 +278,7 @@ namespace Sandbox.Game.Components
                 }
             }
 
-            if (MySession.ControlledEntity == character)
+            if (MySession.Static.ControlledEntity == character)
             {
                 if (character.IsDead && character.CurrentRespawnCounter > 0)
                 {
@@ -206,7 +287,7 @@ namespace Sandbox.Game.Components
 
                 if (!character.IsDead && m_currentHitIndicatorCounter > 0)
                 {
-                    m_currentHitIndicatorCounter -= MyEngineConstants.UPDATE_STEP_SIZE_IN_SECONDS;
+                    m_currentHitIndicatorCounter -= VRage.Game.MyEngineConstants.UPDATE_STEP_SIZE_IN_SECONDS;
 
                     if (m_currentHitIndicatorCounter < 0)
                         m_currentHitIndicatorCounter = 0;
@@ -246,21 +327,26 @@ namespace Sandbox.Game.Components
         private void DrawJetpackThrusts(bool updateCalled)
         {
             MyCharacter character = m_skinnedEntity as MyCharacter;
+	        if (character == null || character.GetCurrentMovementState() == MyCharacterMovementEnum.Died)
+		        return;
 
-            if (character.CanDrawThrusts() == false)
-            {
+	        var jetpack = character.JetpackComp;
+
+            if (jetpack == null || !jetpack.CanDrawThrusts)
                 return;
-            }
+
+            var thrustComponent = Container.Get<MyEntityThrustComponent>();
+            if (thrustComponent == null)
+                return;
 
             //VRageRender.MyRenderProxy.DebugDrawLine3D(WorldMatrix.Translation, WorldMatrix.Translation + Physics.LinearAcceleration, Color.White, Color.Green, false);
 
+            var worldToLocal = MatrixD.Invert(Container.Entity.PositionComp.WorldMatrix);
             foreach (MyJetpackThrust thrust in m_jetpackThrusts)
             {
-                float strength = 0;
-                Vector3D position = Vector3D.Zero;
-                var worldToLocal = MatrixD.Invert(Container.Entity.PositionComp.WorldMatrix);
+	            Vector3D position = Vector3D.Zero;
 
-                if (character.JetpackEnabled && character.IsJetpackPowered() && !character.IsInFirstPersonView)
+                if ((jetpack.TurnedOn && jetpack.IsPowered) && !character.IsInFirstPersonView)
                 {
                     var thrustMatrix = (MatrixD)thrust.ThrustMatrix * Container.Entity.PositionComp.WorldMatrix;
                     Vector3D forward = Vector3D.TransformNormal(thrust.Forward, thrustMatrix);
@@ -270,8 +356,10 @@ namespace Sandbox.Game.Components
                     float flameScale = 0.05f;
                     if (updateCalled)
                         thrust.ThrustRadius = MyUtils.GetRandomFloat(0.9f, 1.1f) * flameScale;
-                    strength = Vector3.Dot(forward, -Container.Entity.Physics.LinearAcceleration);
-                    strength = MathHelper.Clamp(strength * 0.5f, 0.1f, 1f);
+
+                    float strength = Vector3.Dot(forward, -Vector3.Transform(thrustComponent.FinalThrust, Entity.WorldMatrix.GetOrientation())/Entity.Physics.Mass);
+
+                    strength = MathHelper.Clamp(strength * 0.09f, 0.1f, 1f);
 
                     if (strength > 0 && thrust.ThrustRadius > 0)
                     {
@@ -336,37 +424,40 @@ namespace Sandbox.Game.Components
         {
             m_jetpackThrusts.Clear();
 
-            foreach (var thrustDefinition in definition.Thrusts)
+			if (definition.Jetpack == null)
+				return;
+
+            foreach (var thrustDefinition in definition.Jetpack.Thrusts)
             {
                 int index;
-                var thrustBone = m_skinnedEntity.FindBone(thrustDefinition.ThrustBone, out index);
-                if (thrustBone != null)
-                {
-                    InitJetpackThrust(index, Vector3.Forward, thrustDefinition.SideFlameOffset, thrustDefinition); // UP is now in -Z
-                    InitJetpackThrust(index, Vector3.Left, thrustDefinition.SideFlameOffset, thrustDefinition);
-                    InitJetpackThrust(index, Vector3.Right, thrustDefinition.SideFlameOffset, thrustDefinition);
-                    InitJetpackThrust(index, Vector3.Backward, thrustDefinition.SideFlameOffset, thrustDefinition); // DOWN is now in Z                    
-                    InitJetpackThrust(index, Vector3.Up, thrustDefinition.FrontFlameOffset, thrustDefinition); // FORWARD is now in Y
-                }
+                var thrustBone = m_skinnedEntity.AnimationController.FindBone(thrustDefinition.ThrustBone, out index);
+	            if (thrustBone == null)
+					continue;
+
+	            InitJetpackThrust(index, Vector3.Forward, thrustDefinition.SideFlameOffset, ref definition.Jetpack.ThrustProperties); // UP is now in -Z
+	            InitJetpackThrust(index, Vector3.Left, thrustDefinition.SideFlameOffset, ref definition.Jetpack.ThrustProperties);
+	            InitJetpackThrust(index, Vector3.Right, thrustDefinition.SideFlameOffset, ref definition.Jetpack.ThrustProperties);
+	            InitJetpackThrust(index, Vector3.Backward, thrustDefinition.SideFlameOffset, ref definition.Jetpack.ThrustProperties); // DOWN is now in Z                    
+	            InitJetpackThrust(index, Vector3.Up, thrustDefinition.FrontFlameOffset, ref definition.Jetpack.ThrustProperties); // FORWARD is now in Y
             }
         }
 
-        private void InitJetpackThrust(int bone, Vector3 forward, float offset, MyJetpackThrustDefinition thrustDefinition)
+        private void InitJetpackThrust(int bone, Vector3 forward, float offset, ref MyObjectBuilder_ThrustDefinition thrustProperties)
         {
             var thrust = new MyJetpackThrust()
             {
                 Bone = bone,
                 Forward = forward,
                 Offset = offset,
-                ThrustMaterial = thrustDefinition.ThrustMaterial,
-                ThrustGlareSize = thrustDefinition.ThrustGlareSize
+                ThrustMaterial = thrustProperties.FlamePointMaterial,
+                ThrustGlareSize = thrustProperties.FlameGlareSize
             };
 
             thrust.Light = MyLights.AddLight();
             thrust.Light.ReflectorDirection = Container.Entity.PositionComp.WorldMatrix.Forward;
             thrust.Light.ReflectorUp = Container.Entity.PositionComp.WorldMatrix.Up;
             thrust.Light.ReflectorRange = 1;
-            thrust.Light.Color = thrustDefinition.ThrustColor;
+            thrust.Light.Color = thrustProperties.FlameIdleColor;
             thrust.Light.Start(MyLight.LightTypeEnum.PointLight, 1);
 
             m_jetpackThrusts.Add(thrust);
@@ -387,7 +478,7 @@ namespace Sandbox.Game.Components
             m_light.Range = 1;
 
             MyCharacterBone leftGlareBone = null;
-            if (definition.LeftLightBone != String.Empty) leftGlareBone = m_skinnedEntity.FindBone(definition.LeftLightBone, out m_leftLightIndex);
+            if (definition.LeftLightBone != String.Empty) leftGlareBone = m_skinnedEntity.AnimationController.FindBone(definition.LeftLightBone, out m_leftLightIndex);
             if (leftGlareBone != null)
             {
                 m_leftGlare = MyLights.AddLight();
@@ -402,7 +493,7 @@ namespace Sandbox.Game.Components
             }
 
             MyCharacterBone rightGlareBone = null;
-            if (definition.RightLightBone != String.Empty) rightGlareBone = m_skinnedEntity.FindBone(definition.RightLightBone, out m_rightLightIndex);
+            if (definition.RightLightBone != String.Empty) rightGlareBone = m_skinnedEntity.AnimationController.FindBone(definition.RightLightBone, out m_rightLightIndex);
             if (rightGlareBone != null)
             {
                 m_rightGlare = MyLights.AddLight();
@@ -454,10 +545,10 @@ namespace Sandbox.Game.Components
             {
                 MyCharacter character = m_skinnedEntity as MyCharacter;
 
-                m_lightLocalPosition = new Vector3(0, 0, 0.3f);
+                m_lightLocalPosition = character.Definition.LightOffset;
 
                 MatrixD headMatrix = character.GetHeadMatrix(false, true, false);
-                MatrixD headMatrixAnim = character.GetHeadMatrix(false, true, true);
+                MatrixD headMatrixAnim = character.GetHeadMatrix(false, true, true, true);
 
                 if (m_oldReflectorAngle != MyCharacter.REFLECTOR_DIRECTION)
                 {

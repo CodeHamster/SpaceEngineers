@@ -1,21 +1,16 @@
-﻿using System;
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System.Linq;
-using System.Text;
-using Sandbox.Common;
 using Sandbox.Common.ObjectBuilders;
 using Sandbox.Definitions;
 using Sandbox.Game.Entities.Cube;
-using Sandbox.Game.Entities.Interfaces;
 using Sandbox.Game.GameSystems.Conveyors;
 using VRage.Import;
 using VRageMath;
 using Sandbox.Common.ObjectBuilders.Definitions;
-using System.Reflection;
-using System.Linq.Expressions;
 using VRageRender;
-using Sandbox.Game.GameSystems.Electricity;
 using System.Diagnostics;
+using Sandbox.Game.EntityComponents;
+using VRage.Game;
 using VRage.ModAPI;
 
 namespace Sandbox.Game.Entities.Blocks
@@ -33,21 +28,21 @@ namespace Sandbox.Game.Entities.Blocks
         SortedDictionary<string, MyModelDummy> m_dummies;
         private bool m_needsRefresh;
 
-        private MyPowerStateEnum m_oldPowerState = MyPowerStateEnum.NoPower;
+        private MyResourceStateEnum m_oldResourceState = MyResourceStateEnum.NoPower;
 
         private new MyUpgradeModuleDefinition BlockDefinition
         {
             get { return (MyUpgradeModuleDefinition)base.BlockDefinition; }
         }
 
-        public override void Init(Common.ObjectBuilders.MyObjectBuilder_CubeBlock builder, MyCubeGrid cubeGrid)
+        public override void Init(MyObjectBuilder_CubeBlock builder, MyCubeGrid cubeGrid)
         {
             base.Init(builder, cubeGrid);
 
             NeedsUpdate |= MyEntityUpdateEnum.EACH_FRAME | MyEntityUpdateEnum.EACH_10TH_FRAME;
 
             m_connectedBlocks = new Dictionary<ConveyorLinePosition, MyCubeBlock>();
-            m_dummies = new SortedDictionary<string,MyModelDummy>(Engine.Models.MyModels.GetModelOnlyDummies(BlockDefinition.Model).Dummies);
+            m_dummies = new SortedDictionary<string,MyModelDummy>(VRage.Game.Models.MyModels.GetModelOnlyDummies(BlockDefinition.Model).Dummies);
 
             InitDummies();
 
@@ -112,20 +107,20 @@ namespace Sandbox.Game.Entities.Blocks
         public override void UpdateAfterSimulation10()
         {
             base.UpdateAfterSimulation10();
-            if (CubeGrid.GridSystems.PowerDistributor.PowerState != m_oldPowerState)
+            if (CubeGrid.GridSystems.ResourceDistributor.ResourceState != m_oldResourceState)
             {
-                m_oldPowerState = CubeGrid.GridSystems.PowerDistributor.PowerState;
+                m_oldResourceState = CubeGrid.GridSystems.ResourceDistributor.ResourceState;
                 UpdateEmissivity();
             }
 
-            m_oldPowerState = CubeGrid.GridSystems.PowerDistributor.PowerState;
+            m_oldResourceState = CubeGrid.GridSystems.ResourceDistributor.ResourceState;
         }
 
         private void InitDummies()
         {
             m_connectedBlocks.Clear();
             m_connectionPositions = MyMultilineConveyorEndpoint.GetLinePositions(this, m_dummies, "detector_upgrade");
-            for (int i = 0; i < m_connectionPositions.Count(); i++)
+            for (int i = 0; i < m_connectionPositions.Length; i++)
             {
                 m_connectionPositions[i] = MyMultilineConveyorEndpoint.PositionToGridCoords(m_connectionPositions[i], this);
                 m_connectedBlocks.Add(m_connectionPositions[i], null);
@@ -311,14 +306,14 @@ namespace Sandbox.Game.Entities.Blocks
                     emissivity = 0f;
                 }
 
-                if (m_oldPowerState != MyPowerStateEnum.Ok)
+                if (m_oldResourceState != MyResourceStateEnum.Ok)
                 {
                     emissivity = 0f;
                 }
 
                 if (Render.RenderObjectIDs[0] != MyRenderProxy.RENDER_ID_UNASSIGNED)
                 {
-                    VRageRender.MyRenderProxy.UpdateModelProperties(Render.RenderObjectIDs[0], 0, null, -1, emissiveName, null, color, null, null, emissivity);
+                    VRageRender.MyRenderProxy.UpdateColorEmissivity(Render.RenderObjectIDs[0], 0, emissiveName, color, emissivity);
                 }
             }
         }
@@ -373,7 +368,7 @@ namespace Sandbox.Game.Entities.Blocks
         {
             get
             {
-                return (uint)m_upgrades.Count();
+                return (uint)m_upgrades.Length;
             }
         }
 

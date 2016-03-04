@@ -2,6 +2,8 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using VRage.Collections;
+using VRage.Library.Collections;
 using VRage.Library.Utils;
 
 namespace VRageRender
@@ -14,6 +16,19 @@ namespace VRageRender
         public bool Processed;
         public MyTimeSpan UpdateTimestamp;
 
-        public readonly List<IMyRenderMessage> RenderInput = new List<IMyRenderMessage>(2048);
+        public readonly List<MyRenderMessageBase> RenderInput = new List<MyRenderMessageBase>(2048);
+
+        public void Enqueue(MyRenderMessageBase message)
+        {
+            //RenderInput.Add(message);
+            if (message.MessageType != MyRenderMessageEnum.DebugDrawAABB)
+            {
+                RenderInput.Add(message);
+            }
+            else
+            {
+                RenderInput.Insert(0, message);
+            }
+        }
     }
 }

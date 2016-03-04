@@ -24,6 +24,12 @@ namespace VRageMath
             Y = y;
         }
 
+        public Vector2I(int width)
+        {
+            X = width;
+            Y = width;
+        }
+
         public Vector2I(Vector2 vec)
         {
             X = (int)vec.X;
@@ -51,10 +57,27 @@ namespace VRageMath
                                 left.Y + right.Y);
         }
 
+        public static Vector2I operator +(Vector2I left, int right)
+        {
+            return new Vector2I(left.X + right,
+                                left.Y + right);
+        }
+
         public static Vector2I operator -(Vector2I left, Vector2I right)
         {
             return new Vector2I(left.X - right.X,
                                 left.Y - right.Y);
+        }
+
+        public static Vector2I operator -(Vector2I left, int value)
+        {
+            return new Vector2I(left.X - value,
+                                left.Y - value);
+        }
+
+        public static Vector2I operator -(Vector2I left)
+        {
+            return new Vector2I(-left.X, -left.Y);
         }
 
         public static Vector2I operator *(Vector2I value1, int multiplier)
@@ -69,6 +92,16 @@ namespace VRageMath
                                 value1.Y / divider);
         }
 
+        public static bool operator ==(Vector2I left, Vector2I right)
+        {
+            return left.X == right.X && left.Y == right.Y;
+        }
+
+        public static bool operator !=(Vector2I left, Vector2I right)
+        {
+            return left.X != right.X || left.Y != right.Y;
+        }
+
         public static Vector2I Floor(Vector2 value)
         {
             return new Vector2I((int)Math.Floor(value.X), (int)Math.Floor(value.Y));
@@ -77,6 +110,28 @@ namespace VRageMath
         public static Vector2I Round(Vector2 value)
         {
             return new Vector2I((int)Math.Round(value.X), (int)Math.Round(value.Y));
+        }
+
+        public bool Between(ref Vector2I start, ref Vector2I end)
+        {
+            return X >= start.X && X <= end.X || Y >= start.Y && Y <= end.Y;
+        }
+
+        public override bool Equals(object obj)
+        {
+            if (!(obj is Vector2I))
+            {
+                return false;
+            }
+            else
+            {
+                return this == (Vector2I) obj;
+            }
+        }
+
+        public override int GetHashCode()
+        {
+            return (X * 397) ^ Y;
         }
 
         #region Comparer

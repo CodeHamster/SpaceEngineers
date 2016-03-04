@@ -602,7 +602,7 @@ namespace VRageRender
                 m_renderTargets[(int)renderTarget] = new Texture(GraphicsDevice, width, height, mipmaps ? 0 : 1, usage, preferredFormat, Pool.Default);
                 m_renderTargets[(int)renderTarget].DebugName = renderTarget.ToString();
             }
-            catch (Exception e)
+            catch (Exception )
             {
                 string formatStr = "Creating render target failed, target: {0}({1}), width: {2}, height: {3}, format: {4}, usage: {5}, mipmaps: {6}";
                 string str = String.Format(formatStr, renderTarget, (int)renderTarget, width, height, preferredFormat, usage, mipmaps);

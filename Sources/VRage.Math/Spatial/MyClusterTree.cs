@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using VRage.Collections;
+using VRage.Library.Collections;
 
 namespace VRageMath.Spatial
 {
@@ -124,6 +125,13 @@ namespace VRageMath.Spatial
         public MyClusterTree(BoundingBoxD? singleCluster)
         {
             SingleCluster = singleCluster;
+        }
+
+        public void CreateSingleCluster()
+        {
+            BoundingBoxD bb = SingleCluster.Value;
+            bb.Inflate(200); //inflate 200m so objects near world border have AABB inside => physics created
+            CreateCluster(ref bb);
         }
 
         public ulong AddObject(BoundingBoxD bbox, Vector3 velocity, IMyActivationHandler activationHandler, ulong? customId)
@@ -296,10 +304,17 @@ namespace VRageMath.Spatial
                 m_objectsData[id].AABB = aabb;
 
                 BoundingBoxD originalAABB = aabb;
-                Vector3 velocityDir = Vector3.Normalize(velocity);
-
+                Vector3 velocityDir = velocity;
+               
+                if(velocity.LengthSquared() > 0.001f)
+                {
+                   velocityDir = Vector3.Normalize(velocity);
+                }
+                
                 BoundingBoxD extendedAABB = aabb.Include(aabb.Center + velocityDir * 2000);
                 //                BoundingBoxD newClusterAABB = aabb.Include(aabb.Center + velocityDir * IdealClusterSize / 2);
+
+                originalAABB.InflateToMinimum(IdealClusterSize);
 
                 System.Diagnostics.Debug.Assert(m_clusters.Contains(objectData.Cluster));
 
@@ -318,6 +333,8 @@ namespace VRageMath.Spatial
 
                             AddObjectToCluster(m_returnedClusters[0], objectData.Id, false);
                         }
+                        else
+                            ReorderClusters(originalAABB.Include(oldAABB), id);
                     }
                     else
                         ReorderClusters(originalAABB.Include(oldAABB), id);
@@ -449,6 +466,13 @@ namespace VRageMath.Spatial
             return Vector3D.Zero;
         }
 
+        public object GetClusterForPosition(Vector3D pos)
+        {
+            var bs = new BoundingSphereD(pos, 1);
+            m_clusterTree.OverlapAllBoundingSphere(ref bs, m_returnedClusters);
+            return m_returnedClusters.Count > 0 ? m_returnedClusters.Single().UserData : null;
+        }
+
         public void Dispose()
         {
             foreach (var cluster in m_clusters)
@@ -471,17 +495,57 @@ namespace VRageMath.Spatial
             return new ListReader<object>(m_userObjects);
         }
 
-        List<MyLineSegmentOverlapResult<MyCluster>> m_lineResultList = new List<MyLineSegmentOverlapResult<MyCluster>>();
-        List<MyCluster> m_resultList = new List<MyCluster>();
-        List<ulong> m_objectDataResultList = new List<ulong>();
+        [ThreadStatic]
+        static List<MyLineSegmentOverlapResult<MyCluster>> m_lineResultListPerThread;
+        static List<MyLineSegmentOverlapResult<MyCluster>> m_lineResultList
+        {
+            get
+            {
+                if (m_lineResultListPerThread == null)
+                    m_lineResultListPerThread = new List<MyLineSegmentOverlapResult<MyCluster>>();
+                return m_lineResultListPerThread;
+            }
+        }
+
+        [ThreadStatic]
+        static List<MyCluster> m_resultListPerThread;
+        static List<MyCluster> m_resultList
+        {
+            get
+            {
+                if (m_resultListPerThread == null)
+                    m_resultListPerThread = new List<MyCluster>();
+                return m_resultListPerThread;
+            }
+        }
+
+        [ThreadStatic]
+        static List<ulong> m_objectDataResultListPerThread;
+        static List<ulong> m_objectDataResultList
+        {
+            get
+            {
+                if (m_objectDataResultListPerThread == null)
+                    m_objectDataResultListPerThread = new List<ulong>();
+                return m_objectDataResultListPerThread;
+            }
+        }
 
         public void CastRay(Vector3D from, Vector3D to, List<MyClusterQueryResult> results)
         {
+            // If m_clusterTree doesn't exist, or the results array is null, don't perform function
+            if (m_clusterTree == null || results == null)
+                return;
+
             LineD line = new LineD(from, to);
             m_clusterTree.OverlapAllLineSegment(ref line, m_lineResultList);
 
             foreach (var res in m_lineResultList)
             {
+                // Skip results without an element
+                if (res.Element == null)
+                    continue;
+
                 results.Add(new MyClusterQueryResult()
                 {
                     AABB = res.Element.AABB,

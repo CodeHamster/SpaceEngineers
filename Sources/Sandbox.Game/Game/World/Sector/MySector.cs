@@ -9,7 +9,10 @@ using Sandbox.Game.Entities.Character;
 using Sandbox.Common;
 using Sandbox.Definitions;
 using System.Diagnostics;
+using VRage.Game;
 using VRage.ObjectBuilders;
+using VRage.Game.Components;
+using VRage.Game.Utils;
 
 namespace Sandbox.Game.World
 {
@@ -39,7 +42,7 @@ namespace Sandbox.Game.World
 
         public static void SetDefaults()
         {
-            SunProperties = MySunProperties.Default;
+            SunProperties = new MySunProperties(MySunProperties.Default);
             FogProperties = MyFogProperties.Default;
             ImpostorProperties = new VRageRender.MyImpostorProperties[1];
             ParticleDustProperties = new MyParticleDustProperties();
@@ -67,7 +70,7 @@ namespace Sandbox.Game.World
             BackgroundOrientation    = Quaternion.CreateFromYawPitchRoll(o.Yaw, o.Pitch, o.Roll);
             DistanceToSun            = environment.DistanceToSun;
 
-            SunProperties = environment.SunProperties;
+            SunProperties = new MySunProperties(environment.SunProperties);
             FogProperties = environment.FogProperties;
 
             if (environmentBuilder != null)
@@ -75,6 +78,8 @@ namespace Sandbox.Game.World
                 Vector3 sunDirection;
                 Vector3.CreateFromAzimuthAndElevation(environmentBuilder.SunAzimuth, environmentBuilder.SunElevation, out sunDirection);
 
+                SunProperties.BaseSunDirectionNormalized = sunDirection;
+                
                 SunProperties.SunDirectionNormalized = sunDirection;
                 SunProperties.SunIntensity = environmentBuilder.SunIntensity;
 
@@ -95,7 +100,7 @@ namespace Sandbox.Game.World
             var objectBuilder = MyObjectBuilderSerializer.CreateNewObject<MyObjectBuilder_EnvironmentSettings>();
 
             float azimuth, elevation;
-            Vector3.GetAzimuthAndElevation(SunProperties.SunDirectionNormalized, out azimuth, out elevation);
+            Vector3.GetAzimuthAndElevation(SunProperties.BaseSunDirectionNormalized, out azimuth, out elevation);
             objectBuilder.SunAzimuth = azimuth;
             objectBuilder.SunElevation = elevation;
             objectBuilder.SunIntensity = SunProperties.SunIntensity;
@@ -109,7 +114,7 @@ namespace Sandbox.Game.World
 
         public override void LoadData()
         {
-            MainCamera = new MyCamera();
+            MainCamera = new MyCamera(MySandboxGame.Config.FieldOfView, MySandboxGame.ScreenViewport);
             MainCamera.FarPlaneDistance = MySession.Static.Settings.ViewDistance;
             MyEntities.LoadData();
         }
@@ -123,7 +128,9 @@ namespace Sandbox.Game.World
 
         public override void UpdateBeforeSimulation()
         {
-            MainCamera.Update();
+            if ( MainCamera != null )
+                MainCamera.Update(VRage.Game.MyEngineConstants.UPDATE_STEP_SIZE_IN_SECONDS);
+
             MyEntities.UpdateBeforeSimulation();
 
             base.UpdateBeforeSimulation();

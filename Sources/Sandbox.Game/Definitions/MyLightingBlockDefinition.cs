@@ -1,11 +1,8 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using Sandbox.Common.ObjectBuilders;
-using Sandbox.Common.ObjectBuilders.Definitions;
+﻿using Sandbox.Common.ObjectBuilders.Definitions;
+using VRage.Game;
+using VRage.Game.Definitions;
+using VRage.Utils;
 using VRageMath;
-using Sandbox.Engine.Utils;
 
 namespace Sandbox.Definitions
 {
@@ -18,6 +15,7 @@ namespace Sandbox.Definitions
         public MyBounds BlinkIntervalSeconds;
         public MyBounds BlinkLenght;
         public MyBounds BlinkOffset;
+	    public MyStringHash ResourceSinkGroup;
         public float RequiredPowerInput;
         public string LightGlare;
         public bool HasPhysics;
@@ -34,6 +32,7 @@ namespace Sandbox.Definitions
             LightRadius        = ob.LightRadius;
             LightFalloff       = ob.LightFalloff;
             LightIntensity     = ob.LightIntensity;
+	        ResourceSinkGroup = MyStringHash.GetOrCompute(ob.ResourceSinkGroup);
             RequiredPowerInput = ob.RequiredPowerInput;
             LightGlare         = ob.LightGlare;
             HasPhysics = ob.HasPhysics;

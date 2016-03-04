@@ -1,4 +1,5 @@
-﻿using Sandbox.Common.ObjectBuilders;
+﻿using VRage.Game;
+
 namespace VRage.Dedicated
 {
     partial class ConfigForm<T> where T : MyObjectBuilder_SessionSettings, new()
@@ -672,7 +673,6 @@ namespace VRage.Dedicated
             this.MinimizeBox = false;
             this.MinimumSize = new System.Drawing.Size(720, 400);
             this.Name = "ConfigForm";
-            this.ShowIcon = false;
             this.StartPosition = System.Windows.Forms.FormStartPosition.CenterScreen;
             this.Text = "Medieval engineers - Dedicated server configurator";
             this.Load += new System.EventHandler(this.ConfigForm_Load);

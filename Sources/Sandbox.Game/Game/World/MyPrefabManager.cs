@@ -1,113 +1,36 @@
 ﻿using ProtoBuf;
-using Sandbox.Common;
 using Sandbox.Common.ObjectBuilders;
 using Sandbox.Engine.Multiplayer;
-using Sandbox.Engine.Utils;
 using Sandbox.Game.Entities;
 using Sandbox.Game.Entities.Cube;
 using Sandbox.Game.Multiplayer;
-using Sandbox.Game.World;
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
-using System.Text;
 using VRage;
 using VRageMath;
 using VRage.Utils;
 using Sandbox.Definitions;
 using Sandbox.Common.ObjectBuilders.Definitions;
 using SteamSDK;
-using Sandbox.Game.GameSystems.Electricity;
 using VRage.Library.Utils;
 using VRage.FileSystem;
 using Sandbox.ModAPI;
 using Sandbox.Engine.Physics;
+using Sandbox.Game.EntityComponents;
+using Sandbox.Game.GameSystems;
 using VRage.ObjectBuilders;
+using Sandbox.Game.Entities.Blocks;
+using VRage.Game;
+using VRage.Game.Entity;
 
 namespace Sandbox.Game.World
 {
-    [PreloadRequired]
-    internal class MySyncPrefabManager
-    {
-        [ProtoContract]
-        [MessageIdAttribute(9234, P2PMessageEnum.Reliable)]
-        protected struct SpawnPrefabMsg
-        {
-            [ProtoMember]
-            public String PrefabName;
-
-            [ProtoMember]
-            public MyPositionAndOrientation PositionAndOrientation;
-
-            [ProtoMember]
-            public Vector3 LinearVelocity;
-
-            [ProtoMember]
-            public Vector3 AngularVelocity;
-
-            [ProtoMember, DefaultValue(null)]
-            public String BeaconName;
-            public bool ShouldSerializeBeaconName() { return BeaconName != null; }
-
-            [ProtoMember]
-            public Sandbox.ModAPI.SpawningOptions SpawningOptions;
-
-            [ProtoMember]
-            public int RngSeed;
-        }
-
-        static MySyncPrefabManager()
-        {
-            MySyncLayer.RegisterMessage<SpawnPrefabMsg>(OnPrefabSpawned, MyMessagePermissions.FromServer);
-        }
-
-        internal static void SendPrefabSpawned(
-            String prefabName,
-            MyPositionAndOrientation posAndOri,
-            Vector3 linearV,
-            Vector3 angularV,
-            String beaconName,
-            Sandbox.ModAPI.SpawningOptions options,
-            int rngSeed)
-        {
-            Debug.Assert(Sync.IsServer, "Only server can spawn new prefabs");
-
-            var msg = new SpawnPrefabMsg();
-            msg.PrefabName = prefabName;
-            msg.PositionAndOrientation = posAndOri;
-            msg.LinearVelocity = linearV;
-            msg.AngularVelocity = angularV;
-            msg.BeaconName = beaconName;
-            msg.SpawningOptions = options;
-            msg.RngSeed = rngSeed;
-
-            Sync.Layer.SendMessageToAll(ref msg);
-        }
-
-        static void OnPrefabSpawned(ref SpawnPrefabMsg msg, MyNetworkClient sender)
-        {
-            using (MyRandom.Instance.PushSeed(msg.RngSeed))
-            {
-                MyPrefabManager.Static.SpawnPrefab(
-                    msg.PrefabName,
-                    (Vector3)(Vector3D)msg.PositionAndOrientation.Position,
-                    msg.PositionAndOrientation.Forward,
-                    msg.PositionAndOrientation.Up,
-                    msg.LinearVelocity,
-                    msg.AngularVelocity,
-                    msg.BeaconName,
-                    msg.SpawningOptions,
-                    updateSync: false);
-            }
-        }
-    }
-
     public class MyPrefabManager : Sandbox.ModAPI.IMyPrefabManager
     {
-
         private static List<MyCubeGrid> m_tmpSpawnedGridList = new List<MyCubeGrid>();
 
         static MyPrefabManager()
@@ -166,21 +89,21 @@ namespace Sandbox.Game.World
         }
 
         // Note: This method is not synchronized. If you want synchronized prefab spawning, use SpawnPrefab
-        public void AddShipPrefab(string prefabName, Matrix? worldMatrix = null)
+        public void AddShipPrefab(string prefabName, Matrix? worldMatrix = null, long factionId = 0, bool spawnAtOrigin = false)
         {
             m_tmpSpawnedGridList.Clear();
-            CreateGridsFromPrefab(m_tmpSpawnedGridList, prefabName, worldMatrix ?? Matrix.Identity);
+            CreateGridsFromPrefab(m_tmpSpawnedGridList, prefabName, worldMatrix ?? Matrix.Identity, factionId: factionId, spawnAtOrigin: spawnAtOrigin);
 
-            foreach (var entity in m_tmpSpawnedGridList)
-            {			
-                MyEntities.Add(entity);
-            }
+            //foreach (var entity in m_tmpSpawnedGridList)
+            //{			
+            //    MyEntities.Add(entity);
+            //}
 
             m_tmpSpawnedGridList.Clear();
         }
 
         // Note: This method is not synchronized. If you want synchronized prefab spawning, use SpawnPrefab
-        public void AddShipPrefabRandomPosition(string prefabName, Vector3D position, float distance)
+        public void AddShipPrefabRandomPosition(string prefabName, Vector3D position, float distance, long factionId = 0, bool spawnAtOrigin = false)
         {
             m_tmpSpawnedGridList.Clear();
 
@@ -202,20 +125,20 @@ namespace Sandbox.Game.World
                     distance += (float)collisionSphere.Radius / 2;
             }
             while (collidedEntity != null);
-            
-            CreateGridsFromPrefab(m_tmpSpawnedGridList, prefabName, Matrix.CreateWorld(spawnPos, Vector3.Forward, Vector3.Up));
 
-            foreach (var grid in m_tmpSpawnedGridList)
-            {
-                MyEntities.Add(grid);
-            }
+            CreateGridsFromPrefab(m_tmpSpawnedGridList, prefabName, Matrix.CreateWorld(spawnPos, Vector3.Forward, Vector3.Up), factionId: factionId, spawnAtOrigin: spawnAtOrigin);
+
+            //foreach (var grid in m_tmpSpawnedGridList)
+            //{
+            //    MyEntities.Add(grid);
+            //}
 
             m_tmpSpawnedGridList.Clear();
         }
 
         // Creates prefab, but won't add into scene
         // WorldMatrix is the matrix of the first grid in the prefab. The others will be transformed to keep their relative positions
-        private void CreateGridsFromPrefab(List<MyCubeGrid> results, string prefabName, MatrixD worldMatrix, bool spawnAtOrigin = false, bool ignoreMemoryLimits = true)
+        private void CreateGridsFromPrefab(List<MyCubeGrid> results, string prefabName, MatrixD worldMatrix, bool spawnAtOrigin = false, bool ignoreMemoryLimits = true, long factionId = 0)
         {
             var prefabDefinition = MyDefinitionManager.Static.GetPrefabDefinition(prefabName);
             Debug.Assert(prefabDefinition != null, "Could not spawn prefab named " + prefabName);
@@ -223,8 +146,9 @@ namespace Sandbox.Game.World
 
             MyObjectBuilder_CubeGrid[] gridObs = prefabDefinition.CubeGrids;
 
-            Debug.Assert(gridObs.Count() != 0);
-            if (gridObs.Count() == 0) return;
+            Debug.Assert(gridObs.Length != 0);
+           
+            if (gridObs.Length == 0) return;
 
             MyEntities.RemapObjectBuilderCollection(gridObs);
 
@@ -241,14 +165,24 @@ namespace Sandbox.Game.World
                 translateToOriginMatrix = MatrixD.CreateWorld(-prefabDefinition.BoundingSphere.Center, Vector3D.Forward, Vector3D.Up);
             }
 
-            List<MyCubeGrid> gridsToMove=new List<MyCubeGrid>();
-            bool needMove=true;
             Vector3D moveVector=new Vector3D();
             bool ignoreMemoryLimitsPrevious = MyEntities.IgnoreMemoryLimits;
             MyEntities.IgnoreMemoryLimits = ignoreMemoryLimits;
-            for (int i = 0; i < gridObs.Count(); ++i)
+            IMyFaction faction = MySession.Static.Factions.TryGetFactionById(factionId);
+            for (int i = 0; i < gridObs.Length; ++i)
             {
+                // Set faction defined in the operation
+                if (faction != null)
+                {
+                    foreach (var cubeBlock in gridObs[i].CubeBlocks)
+                    {
+                        cubeBlock.Owner = faction.FounderId;
+                        cubeBlock.ShareMode = MyOwnershipShareModeEnum.Faction;
+                    }
+                }
+
                 MyEntity entity = MyEntities.CreateFromObjectBuilder(gridObs[i]);
+                MyEntities.Add(entity);
                 MyCubeGrid cubeGrid = entity as MyCubeGrid;
 
                 Debug.Assert(cubeGrid != null, "Could not create grid prefab!");
@@ -258,12 +192,8 @@ namespace Sandbox.Game.World
                     MatrixD newWorldMatrix;
                     newWorldMatrix = MatrixD.Multiply(originalGridMatrix, MatrixD.Multiply(translateToOriginMatrix, worldMatrix));
 
-                    Sandbox.Game.Gui.MyCestmirDebugInputComponent.AddDebugPoint(newWorldMatrix.Translation, Color.Red);
-
                     if (cubeGrid.IsStatic)
                     {
-                        Debug.Assert(Vector3.IsZero(newWorldMatrix.Forward - Vector3.Forward, 0.001f), "Creating a static grid with orientation that is not identity");
-                        Debug.Assert(Vector3.IsZero(newWorldMatrix.Up - Vector3.Up, 0.001f), "Creating a static grid with orientation that is not identity");
                         Vector3 rounded = default(Vector3I);
                         if (MyPerGameSettings.BuildingSettings.StaticGridAlignToCenter)
                             rounded = Vector3I.Round(newWorldMatrix.Translation / cubeGrid.GridSize) * cubeGrid.GridSize;
@@ -271,8 +201,7 @@ namespace Sandbox.Game.World
                             rounded = Vector3I.Round(newWorldMatrix.Translation / cubeGrid.GridSize + 0.5f) * cubeGrid.GridSize - 0.5f * cubeGrid.GridSize;
                         moveVector = new Vector3D(rounded - newWorldMatrix.Translation);
                         newWorldMatrix.Translation = rounded;
-                        cubeGrid.WorldMatrix = newWorldMatrix;
-                        needMove=false;
+                        cubeGrid.PositionComp.SetWorldMatrix(newWorldMatrix, forceUpdate: true);
 
                         if (MyPerGameSettings.Destruction)
                         {
@@ -286,9 +215,7 @@ namespace Sandbox.Game.World
                     else
                     {
                         newWorldMatrix.Translation += moveVector;
-                        cubeGrid.WorldMatrix = newWorldMatrix;
-                        if (needMove)
-                            gridsToMove.Add(cubeGrid);
+                        cubeGrid.PositionComp.SetWorldMatrix(newWorldMatrix, forceUpdate: true);
                     }
                     //if some mods are missing prefab can have 0 blocks,
                     //we don't want to process this grid
@@ -298,14 +225,8 @@ namespace Sandbox.Game.World
                     }
                 }
             }
-            foreach (var grid in gridsToMove)
-            {
-                MatrixD wmatrix = grid.WorldMatrix;
-                wmatrix.Translation += moveVector;
-            }
             MyEntities.IgnoreMemoryLimits = ignoreMemoryLimitsPrevious;
         }
-
 
         public void SpawnPrefab(
             String prefabName,
@@ -316,10 +237,11 @@ namespace Sandbox.Game.World
             Vector3 initialAngularVelocity = default(Vector3),
             String beaconName = null,
             SpawningOptions spawningOptions = SpawningOptions.None,
+            long ownerId = 0,
             bool updateSync = false)
         {
             m_tmpSpawnedGridList.Clear();
-            SpawnPrefabInternal(m_tmpSpawnedGridList, prefabName, position, forward, up, initialLinearVelocity, initialAngularVelocity, beaconName, spawningOptions, updateSync);
+            SpawnPrefabInternal(m_tmpSpawnedGridList, prefabName, position, forward, up, initialLinearVelocity, initialAngularVelocity, beaconName, spawningOptions, ownerId, updateSync);
             m_tmpSpawnedGridList.Clear();
         }
 
@@ -333,9 +255,10 @@ namespace Sandbox.Game.World
             Vector3 initialAngularVelocity = default(Vector3),
             String beaconName = null,
             SpawningOptions spawningOptions = SpawningOptions.None,
+            long ownerId = 0,
             bool updateSync = false)
         {
-            SpawnPrefabInternal(resultList, prefabName, position, forward, up, initialLinearVelocity, initialAngularVelocity, beaconName, spawningOptions, updateSync);
+            SpawnPrefabInternal(resultList, prefabName, position, forward, up, initialLinearVelocity, initialAngularVelocity, beaconName, spawningOptions, ownerId, updateSync);
         }
 
         void IMyPrefabManager.SpawnPrefab(
@@ -344,14 +267,33 @@ namespace Sandbox.Game.World
            Vector3D position,
            Vector3 forward,
            Vector3 up,
-           Vector3 initialLinearVelocity = default(Vector3),
-           Vector3 initialAngularVelocity = default(Vector3),
-           String beaconName = null,
-           SpawningOptions spawningOptions = SpawningOptions.None,
-           bool updateSync = false)
+           Vector3 initialLinearVelocity,
+           Vector3 initialAngularVelocity,
+           String beaconName,
+           SpawningOptions spawningOptions,
+           bool updateSync)
         {
             List<MyCubeGrid> results=new List<MyCubeGrid>();
-            SpawnPrefab(results,prefabName,position,forward,up,initialLinearVelocity,initialAngularVelocity,beaconName,spawningOptions,updateSync);
+            SpawnPrefab(results,prefabName,position,forward,up,initialLinearVelocity,initialAngularVelocity,beaconName,spawningOptions,0,updateSync);
+            foreach (var result in results)
+                resultList.Add(result);
+        }
+
+        void IMyPrefabManager.SpawnPrefab(
+           List<IMyCubeGrid> resultList,
+           String prefabName,
+           Vector3D position,
+           Vector3 forward,
+           Vector3 up,
+           Vector3 initialLinearVelocity,
+           Vector3 initialAngularVelocity,
+           String beaconName,
+           SpawningOptions spawningOptions,
+           long ownerId,
+           bool updateSync)
+        {
+            List<MyCubeGrid> results = new List<MyCubeGrid>();
+            SpawnPrefab(results, prefabName, position, forward, up, initialLinearVelocity, initialAngularVelocity, beaconName, spawningOptions, ownerId, updateSync);
             foreach (var result in results)
                 resultList.Add(result);
         }
@@ -366,6 +308,7 @@ namespace Sandbox.Game.World
             Vector3 initialAngularVelocity,
             String beaconName,
             SpawningOptions spawningOptions,
+            long ownerId,
             bool updateSync)
         {
             Debug.Assert(Vector3.IsUnit(ref forward));
@@ -385,13 +328,14 @@ namespace Sandbox.Game.World
                 bool setNeutralOwner = spawningOptions.HasFlag(SpawningOptions.SetNeutralOwner);
                 bool needsToIterateThroughBlocks = spawnCargo || rotateToCockpit || setNeutralOwner || beaconName != null;
 
-                long owner = 0;
+                long owner = ownerId;
                 if (updateSync && spawningOptions.HasFlag(SpawningOptions.SetNeutralOwner) && resultList.Count != 0)
                 {
                     string npcName = "NPC " + MyRandom.Instance.Next(1000, 9999);
                     var identity = Sync.Players.CreateNewIdentity(npcName);
                     owner = identity.IdentityId;
                 }
+                bool setOwnership = owner != 0;
 
                 foreach (var grid in resultList)
                 {
@@ -399,7 +343,9 @@ namespace Sandbox.Game.World
 
                     if (spawningOptions.HasFlag(SpawningOptions.DisableDampeners))
                     {
-                        grid.GridSystems.ThrustSystem.DampenersEnabled = false;
+	                    var thrustComp = grid.Components.Get<MyEntityThrustComponent>();
+						if(thrustComp != null)
+							thrustComp.DampenersEnabled = false;
                     }
 
                     if ((spawningOptions.HasFlag(SpawningOptions.DisableSave)))
@@ -427,11 +373,16 @@ namespace Sandbox.Game.World
                                 MyBeacon beacon = block.FatBlock as MyBeacon;
                                 beacon.SetCustomName(beaconName);
                             }
-                            else if (spawningOptions.HasFlag(SpawningOptions.TurnOffReactors) && block.FatBlock is IMyPowerProducer)
-                            {
-                                (block.FatBlock as IMyPowerProducer).Enabled = false;
-                            }
-                            if (setNeutralOwner && block.FatBlock != null && block.BlockDefinition.RatioEnoughForOwnership(block.BuildLevelRatio))
+							else if (spawningOptions.HasFlag(SpawningOptions.TurnOffReactors) && block.FatBlock != null && block.FatBlock.Components.Contains(typeof(MyResourceSourceComponent)))
+							{
+								var sourceComp = block.FatBlock.Components.Get<MyResourceSourceComponent>();
+								if (sourceComp != null)
+								{
+									if(sourceComp.ResourceTypes.Contains(MyResourceDistributorComponent.ElectricityId))
+										sourceComp.Enabled = false;
+								}
+							}
+                            if (setOwnership && block.FatBlock != null && block.BlockDefinition.RatioEnoughForOwnership(block.BuildLevelRatio))
                             {
                                 block.FatBlock.ChangeOwner(owner, MyOwnershipShareModeEnum.None);
                             }
@@ -453,7 +404,7 @@ namespace Sandbox.Game.World
                 }
 
                 foreach (var grid in resultList)
-                {                  
+                {
                     if (firstCockpit != null)
                     {
                         grid.WorldMatrix = grid.WorldMatrix * transform;
@@ -465,13 +416,8 @@ namespace Sandbox.Game.World
                     }
 
                     ProfilerShort.Begin("Add entity");
-                    MyEntities.Add(grid);
+                    //MyEntities.Add(grid);
                     ProfilerShort.End();
-                }
-
-                if (updateSync == true)
-                {
-                    MySyncPrefabManager.SendPrefabSpawned(prefabName, new MyPositionAndOrientation(position, forward, up), initialLinearVelocity, initialAngularVelocity, beaconName, spawningOptions, rngSeed);
                 }
             }
         }
@@ -479,9 +425,9 @@ namespace Sandbox.Game.World
         private static List<MyPhysics.HitInfo> m_raycastHits = new List<MyPhysics.HitInfo>();
         bool IMyPrefabManager.IsPathClear(Vector3D from, Vector3D to)
         {
-            MyPhysics.CastRay(from, to, m_raycastHits, MyPhysics.ObjectDetectionCollisionLayer);
+            MyPhysics.CastRay(from, to, m_raycastHits, MyPhysics.CollisionLayers.ObjectDetectionCollisionLayer);
             m_raycastHits.Clear();
-            return m_raycastHits.Count()== 0;
+            return m_raycastHits.Count== 0;
         }
         bool IMyPrefabManager.IsPathClear(Vector3D from, Vector3D to, double halfSize)
         {
@@ -498,32 +444,32 @@ namespace Sandbox.Game.World
             other.Normalize();
             other = other * halfSize;
             //first
-            MyPhysics.CastRay(from+other, to+other, m_raycastHits, MyPhysics.ObjectDetectionCollisionLayer);
-            if (m_raycastHits.Count() > 0)
+            MyPhysics.CastRay(from+other, to+other, m_raycastHits, MyPhysics.CollisionLayers.ObjectDetectionCollisionLayer);
+            if (m_raycastHits.Count > 0)
             {
                 m_raycastHits.Clear();
                 return false;
             }
             //second
             other *= -1;
-            MyPhysics.CastRay(from + other, to + other, m_raycastHits, MyPhysics.ObjectDetectionCollisionLayer);
-            if (m_raycastHits.Count() > 0)
+            MyPhysics.CastRay(from + other, to + other, m_raycastHits, MyPhysics.CollisionLayers.ObjectDetectionCollisionLayer);
+            if (m_raycastHits.Count > 0)
             {
                 m_raycastHits.Clear();
                 return false;
             }
             //third
             other = Vector3D.Cross(forward, other);
-            MyPhysics.CastRay(from + other, to + other, m_raycastHits, MyPhysics.ObjectDetectionCollisionLayer);
-            if (m_raycastHits.Count() > 0)
+            MyPhysics.CastRay(from + other, to + other, m_raycastHits, MyPhysics.CollisionLayers.ObjectDetectionCollisionLayer);
+            if (m_raycastHits.Count > 0)
             {
                 m_raycastHits.Clear();
                 return false;
             }
             //fourth
             other *= -1;
-            MyPhysics.CastRay(from + other, to + other, m_raycastHits, MyPhysics.ObjectDetectionCollisionLayer);
-            if (m_raycastHits.Count() > 0)
+            MyPhysics.CastRay(from + other, to + other, m_raycastHits, MyPhysics.CollisionLayers.ObjectDetectionCollisionLayer);
+            if (m_raycastHits.Count > 0)
             {
                 m_raycastHits.Clear();
                 return false;

@@ -10,6 +10,8 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using VRage;
+using VRage.Game;
+using VRage.Game.Entity;
 using VRage.ModAPI;
 using VRageMath;
 
@@ -44,9 +46,9 @@ namespace Sandbox.Game.World
         public Vector3? ColorMask { get; private set; }
 
         public bool IsDead { get; private set; }
+        public bool FirstSpawnDone { get; private set; }
 
         public event Action<MyCharacter, MyCharacter> CharacterChanged;
-
 
         private MyIdentity(string name, MyEntityIdentifier.ID_OBJECT_TYPE identityType, string model = null)
         {
@@ -117,12 +119,15 @@ namespace Sandbox.Game.World
 
             Character = character;
 
-            character.OnClosing += character_OnClosing;
-            character.SyncObject.CharacterModelSwitched += character_CharacterModelSwitched;
+            if (character != null)
+            {
+                character.OnClosing += character_OnClosing;
+                character.SyncObject.CharacterModelSwitched += character_CharacterModelSwitched;
 
-            SaveModelAndColorFromCharacter();
+                SaveModelAndColorFromCharacter();
 
-            IsDead = character.IsDead;
+                IsDead = character.IsDead;
+            }
 
             if (CharacterChanged != null)
                 CharacterChanged(oldCharacter, Character);
@@ -137,6 +142,14 @@ namespace Sandbox.Game.World
         public void SetDead(bool dead)
         {
             IsDead = dead;
+        }
+
+        /// <summary>
+        /// This is to prevent spawning after permadeath - in such cases, the player needs new identity!
+        /// </summary>
+        public void PerformFirstSpawn()
+        {
+            FirstSpawnDone = true;
         }
 
         /// <summary>

@@ -1,28 +1,33 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using ProtoBuf;
+﻿using ProtoBuf;
 using VRage.Data;
 using VRage.ObjectBuilders;
+using System.ComponentModel;
+using System.Xml.Serialization;
 
-namespace Sandbox.Common.ObjectBuilders.Definitions
+namespace VRage.Game
 {
-    //[Flags]
-    //public enum MyBonesArea
-    //{
-    //    Body            = 1 << 0,
-    //    LeftHand        = 1 << 1,
-    //    RightHand       = 1 << 2,
-    //    LeftFingers     = 1 << 3,
-    //    RightFingers    = 1 << 4,
-    //    Head            = 1 << 5,
-    //    Spine           = 1 << 6,
+    [ProtoContract]
+    public struct AnimationItem
+    {
+        [ProtoMember]
+        public float Ratio;
 
-    //    TopBody = LeftHand | RightHand | LeftFingers | RightFingers | Head | Spine   
-    //}
+        [ProtoMember]
+        public string Animation;
+    }
 
+    [ProtoContract]
+    public struct AnimationSet
+    {
+        [ProtoMember]
+        public float Probability;
+
+        [ProtoMember]
+        public bool Continuous;
+
+        [ProtoMember]
+        public AnimationItem[] AnimationItems;
+    }
 
     [ProtoContract]
     [MyObjectBuilderDefinition]
@@ -56,5 +61,9 @@ namespace Sandbox.Common.ObjectBuilders.Definitions
 
         [ProtoMember]
         public SerializableDefinitionId LeftHandItem;
+
+        [ProtoMember, DefaultValue(null)]
+        [XmlArrayItem("AnimationSet")]
+        public AnimationSet[] AnimationSets;
     }
 }

@@ -1,7 +1,5 @@
 ﻿using Sandbox.Common;
 using Sandbox.Common.ObjectBuilders;
-using Sandbox.Common.ObjectBuilders.Definitions;
-using Sandbox.Common.ObjectBuilders.AI;
 using Sandbox.Definitions;
 using Sandbox.Engine.Networking;
 using Sandbox.Engine.Physics;
@@ -26,6 +24,9 @@ using VRage.Library.Utils;
 using VRage.Utils;
 using VRage.Win32;
 using VRageMath;
+using VRage.Collections;
+using VRage.Game;
+using VRage.Game.Components;
 
 namespace Sandbox.Game.AI
 {
@@ -40,18 +41,31 @@ namespace Sandbox.Game.AI
     [MySessionComponentDescriptor(MyUpdateOrder.Simulation | MyUpdateOrder.AfterSimulation, 500, typeof(MyObjectBuilder_AIComponent))]
     public class MyAIComponent : MySessionComponentBase
 	{
-
 		private struct AgentSpawnData
         {
             public MyAgentDefinition AgentDefinition;
             public Vector3D? SpawnPosition;
             public bool CreatedByPlayer;
+            public int BotId;
 
-            public AgentSpawnData(MyAgentDefinition agentDefinition, Vector3D? spawnPosition = null, bool createAlways = false)
+            public AgentSpawnData(MyAgentDefinition agentDefinition, int botId, Vector3D? spawnPosition = null, bool createAlways = false)
             {
                 AgentDefinition = agentDefinition;
                 SpawnPosition = spawnPosition;
                 CreatedByPlayer = createAlways;
+                BotId = botId;
+            }
+        }
+
+        public struct AgentGroupData
+        {
+            public MyAgentDefinition AgentDefinition;
+            public int Count;
+
+            public AgentGroupData(MyAgentDefinition agentDefinition, int count)
+            {
+                AgentDefinition = agentDefinition;
+                Count = count;
             }
         }
 
@@ -67,11 +81,12 @@ namespace Sandbox.Game.AI
 
         private Dictionary<int, MyObjectBuilder_Bot> m_loadedBotObjectBuildersByHandle;
         private List<int> m_loadedLocalPlayers;
-        private Queue<int> m_removeQueue;
+        private List<Vector3D> m_tmpSpawnPoints = new List<Vector3D>();
 
         public static MyAIComponent Static;
-        public static IMyBotFactory BotFactory;
+        public static MyBotFactoryBase BotFactory;
 
+        private int m_lastBotId = 0;
         private Dictionary<int, AgentSpawnData> m_agentsToSpawn;
 
         private MyHudNotification m_maxBotNotification;
@@ -79,11 +94,23 @@ namespace Sandbox.Game.AI
         public MyAgentDefinition BotToSpawn = null;
         public MyAiCommandDefinition CommandDefinition = null;
 
+        public event Action<int, MyBotDefinition> BotCreatedEvent;
+
+        private struct BotRemovalRequest
+        {
+            public int SerialId;
+            public bool RemoveCharacter;
+        }
+
+        private MyConcurrentQueue<BotRemovalRequest> m_removeQueue;
+        private MyConcurrentQueue<AgentSpawnData> m_processQueue;
+        private FastResourceLock m_lock;
+
         public MyAIComponent()
         {
             Static = this;
-            BotFactory = Activator.CreateInstance(MyPerGameSettings.BotFactoryType) as IMyBotFactory;
-            Random = new MyRandom();
+            BotFactory = Activator.CreateInstance(MyPerGameSettings.BotFactoryType) as MyBotFactoryBase;
+            Random = MyFakes.DEBUG_AVOID_RANDOM_AI ? new MyRandom(0): new MyRandom();
         }
 
         public override void LoadData()
@@ -107,8 +134,10 @@ namespace Sandbox.Game.AI
                 m_loadedLocalPlayers = new List<int>();
                 m_loadedBotObjectBuildersByHandle = new Dictionary<int, MyObjectBuilder_Bot>();
                 m_agentsToSpawn = new Dictionary<int, AgentSpawnData>();
-                m_removeQueue = new Queue<int>();
-                m_maxBotNotification = new MyHudNotification(MySpaceTexts.NotificationMaximumNumberBots, 2000, MyFontEnum.Red);
+                m_removeQueue = new MyConcurrentQueue<BotRemovalRequest>();
+                m_maxBotNotification = new MyHudNotification(MyCommonTexts.NotificationMaximumNumberBots, 2000, MyFontEnum.Red);
+                m_processQueue = new MyConcurrentQueue<AgentSpawnData>();
+                m_lock = new FastResourceLock();
 
                 if (MyFakes.ENABLE_BEHAVIOR_TREE_TOOL_COMMUNICATION)
                 {
@@ -158,13 +187,22 @@ namespace Sandbox.Game.AI
                     MyObjectBuilder_Bot botBuilder = null;
                     m_loadedBotObjectBuildersByHandle.TryGetValue(playerNumber, out botBuilder);
 
-                    CreateBot(playerNumber, botBuilder);
+                    Debug.Assert(botBuilder == null || botBuilder.TypeId == botBuilder.BotDefId.TypeId, "Bot types don't match! Are you loading an old save?");
+                    if ((botBuilder == null || botBuilder.TypeId == botBuilder.BotDefId.TypeId))
+                    {
+                        CreateBot(playerNumber, botBuilder);
+                    }
                 }
 
                 m_loadedLocalPlayers.Clear();
                 m_loadedBotObjectBuildersByHandle.Clear();
 
                 Sync.Players.LocalPlayerRemoved += LocalPlayerRemoved;
+
+                if (MyPerGameSettings.Game == GameEnum.ME_GAME && Sync.IsServer)
+                {
+                    CleanUnusedIdentities();
+                }
             }
         }
 
@@ -174,6 +212,23 @@ namespace Sandbox.Game.AI
             {
                 // Pathfinding should be updated before the bots are simulated, so that the changes
                 // in meshes and voxels are reflected in the new meshes if the bots want to do some pathfinding
+                if (MyFakes.DEBUG_ONE_VOXEL_PATHFINDING_STEP_SETTING)
+                {
+                    if (!MyFakes.DEBUG_ONE_VOXEL_PATHFINDING_STEP)
+                        // voxel pathfinding step isn't allowed - it disables also other AI stuff
+                        return;
+                }
+                else
+                {
+                    if (MyFakes.DEBUG_ONE_AI_STEP_SETTING)
+                        if (!MyFakes.DEBUG_ONE_AI_STEP)
+                            // AI step isn't allowed
+                            return;
+                        else
+                            // disable next AI step - and do one
+                            MyFakes.DEBUG_ONE_AI_STEP = false;
+                }
+
                 m_pathfinding.Update();
 
                 ProfilerShort.Begin("MyAIComponent.Simulate()");
@@ -191,19 +246,19 @@ namespace Sandbox.Game.AI
 
             if (MyPerGameSettings.EnableAi)
             {
-                if (m_removeQueue.Count > 0)
+                PerformBotRemovals();
+
+                AgentSpawnData newBotData;
+                while (m_processQueue.TryDequeue(out newBotData))
                 {
-                    foreach (var playerNumber in m_removeQueue)
-                    {
-                        MyPlayer player = Sync.Players.TryGetPlayerById(new MyPlayer.PlayerId(MySteam.UserId, playerNumber));
-                        Sync.Players.RemovePlayer(player);
-                    }
-                    m_removeQueue.Clear();
+                    m_agentsToSpawn[newBotData.BotId] = newBotData;
+                    Sync.Players.RequestNewPlayer(newBotData.BotId, MyDefinitionManager.Static.GetRandomCharacterName(), newBotData.AgentDefinition.BotModel);
                 }
 
                 ProfilerShort.Begin("Debug draw");
                 m_pathfinding.DebugDraw();
                 m_botCollection.DebugDraw();
+                DebugDrawBots();
                 ProfilerShort.End();
             }
         }
@@ -268,22 +323,50 @@ namespace Sandbox.Game.AI
             return SpawnNewBotInternal(agentDefinition, spawnPosition, false);
         }
 
-        private int SpawnNewBotInternal(MyAgentDefinition agentDefinition, Vector3D? spawnPosition = null, bool createdByPlayer = false)
+        public int SpawnNewBot(MyAgentDefinition agentDefinition, Vector3D position)
         {
-            int newBotId = 0;
-            foreach (var player in Sync.Players.GetOnlinePlayers())
+            return SpawnNewBotInternal(agentDefinition, position, true);
+        }
+
+        public bool SpawnNewBotGroup(string type, List<AgentGroupData> groupData, List<int> outIds)
+        {
+            int totalCount = 0;
+            foreach (var data in groupData)
+                totalCount += data.Count;
+            BotFactory.GetBotGroupSpawnPositions(type, totalCount, m_tmpSpawnPoints);
+            int spawnedAmount = m_tmpSpawnPoints.Count;
+            for (int i = 0, j = 0, count = 0; i < spawnedAmount; i++)
             {
-                if (player.Id.SteamId == Sync.MyId && player.Id.SerialId > newBotId)
+                int id = SpawnNewBotInternal(groupData[j].AgentDefinition, m_tmpSpawnPoints[i]);
+                if (outIds != null)
+                    outIds.Add(id);
+                if (groupData[j].Count == ++count)
                 {
-                    newBotId = player.Id.SerialId;
+                    count = 0;
+                    j++;
                 }
             }
-            newBotId++;
+            m_tmpSpawnPoints.Clear();
+            return spawnedAmount == totalCount;
+        }
 
-            m_agentsToSpawn[newBotId] = new AgentSpawnData(agentDefinition, spawnPosition, createdByPlayer);
+        private int SpawnNewBotInternal(MyAgentDefinition agentDefinition, Vector3D? spawnPosition = null, bool createdByPlayer = false)
+        {
+            m_lock.AcquireExclusive();
+            foreach (var player in Sync.Players.GetOnlinePlayers())
+            {
+                if (player.Id.SteamId == Sync.MyId && player.Id.SerialId > m_lastBotId)
+                {
+                    m_lastBotId = player.Id.SerialId;
+                }
+            }
+            m_lastBotId++;
+            var lastBotId = m_lastBotId;
+            m_lock.ReleaseExclusive();
 
-            Sync.Players.RequestNewPlayer(newBotId, MyDefinitionManager.Static.GetRandomCharacterName(), agentDefinition.BotModel);
-            return newBotId;
+            m_processQueue.Enqueue(new AgentSpawnData(agentDefinition, lastBotId, spawnPosition, createdByPlayer));
+
+            return lastBotId;
         }
 
         public int SpawnNewBot(MyAgentDefinition agentDefinition, Vector3D? spawnPosition)
@@ -299,20 +382,15 @@ namespace Sandbox.Game.AI
                 return false;
             }
 
-            if (MyFakes.ENABLE_BRAIN_SIMULATOR) return true;
-
             if (MyFakes.DEVELOPMENT_PRESET) return true;
 
-
-			int perPlayerBotMultiplier = (MySession.Static.CreativeMode ? MySession.Static.MaxPlayers : 1);
-
-            if (MySteam.UserId == pid.SteamId)
+            if (Sync.MyId == pid.SteamId)
             {
                 AgentSpawnData spawnData = default(AgentSpawnData);
                 if (m_agentsToSpawn.TryGetValue(pid.SerialId, out spawnData))
                 {
                     if (spawnData.CreatedByPlayer)
-                        return Bots.GetCreatedBotCount() < BotFactory.MaximumBotPerPlayer*perPlayerBotMultiplier;
+                        return Bots.GetCreatedBotCount() < BotFactory.MaximumBotPerPlayer;
                     else
                         return Bots.GetGeneratedBotCount() < BotFactory.MaximumUncontrolledBotCount;
                 }
@@ -328,25 +406,19 @@ namespace Sandbox.Game.AI
                 var lookedPlayer = pid.SteamId;
                 var players = Sync.Players.GetOnlinePlayers();
 
-				if (MySession.Static.CreativeMode)
+				foreach (var player in players)
 				{
-					foreach (var player in players)
-					{
-						if (player.Id.SerialId != 0)
-							++botCount;
-					}
-				}
-				else
-				{
-					foreach (var player in players)
-					{
-						if (player.Id.SteamId == lookedPlayer && player.Id.SerialId != 0)
-							botCount++;
-					}
+					if (player.Id.SteamId == lookedPlayer && player.Id.SerialId != 0)
+						botCount++;
 				}
 
-				return botCount < BotFactory.MaximumBotPerPlayer * perPlayerBotMultiplier;
+				return botCount < BotFactory.MaximumBotPerPlayer;
             }
+        }
+
+        public int GetAvailableUncontrolledBotsCount()
+        {
+            return BotFactory.MaximumUncontrolledBotCount - Bots.GetGeneratedBotCount();
         }
 
         public int GetBotCount(string behaviorType)
@@ -354,9 +426,30 @@ namespace Sandbox.Game.AI
             return m_botCollection.GetCurrentBotsCount(behaviorType);
         }
 
+        public void CleanUnusedIdentities()
+        {
+            List<MyPlayer.PlayerId> tmpPlayerIds = new List<MyPlayer.PlayerId>();
+            foreach (var playerId in Sync.Players.GetAllPlayers()) tmpPlayerIds.Add(playerId);
+
+            foreach (var playerId in tmpPlayerIds)
+            {
+                if (playerId.SteamId != Sync.MyId || playerId.SerialId == 0) continue;
+
+                var onlinePlayer = Sync.Players.GetPlayerById(playerId);
+                if (onlinePlayer == null)
+                {
+                    var identityId = Sync.Players.TryGetIdentityId(playerId.SteamId, playerId.SerialId);
+                    if (identityId != 0)
+                    {
+                        Sync.Players.RemoveIdentity(identityId, playerId);
+                    }
+                }
+            }
+        }
+
         void PlayerCreated(int playerNumber)
         {
-            if (playerNumber == 0 || MyFakes.ENABLE_BRAIN_SIMULATOR)
+            if (playerNumber == 0)
                 return;
             CreateBot(playerNumber);
         }
@@ -440,11 +533,17 @@ namespace Sandbox.Game.AI
             }
             else
             {
-                Debug.Assert(botBuilder != null && !botBuilder.BotDefId.TypeId.IsNull, "Null or invalid bot builder. Bot is not going to be created");
                 if (botBuilder == null || botBuilder.BotDefId.TypeId.IsNull)
+                {
+                    MyPlayer missingBotPlayer = null;
+                    if (Sync.Players.TryGetPlayerById(new MyPlayer.PlayerId(Sync.MyId, playerNumber), out missingBotPlayer))
+                    {
+                        Sync.Players.RemovePlayer(missingBotPlayer);
+                    }
                     return;
+                }
 
-                botDefinition = MyDefinitionManager.Static.GetBotDefinition(botBuilder.BotDefId);
+                MyDefinitionManager.Static.TryGetBotDefinition(botBuilder.BotDefId, out botDefinition);
                 Debug.Assert(botDefinition != null, "Bot definition could not be found.");
                 if (botDefinition == null)
                     return;
@@ -469,19 +568,53 @@ namespace Sandbox.Game.AI
                     m_botCollection.AddBot(playerNumber, bot);
                     if (isBotSpawned && bot is IMyEntityBot)
                         (bot as IMyEntityBot).Spawn(spawnData.SpawnPosition, createdByPlayer);
+
+                    if (BotCreatedEvent != null)
+                    {
+                        BotCreatedEvent(playerNumber, bot.BotDefinition);
+                    }
                 }
             }
             else
             {
                 // hack for removing uncontrolled bot players or saved dead characters
-                var player = Sync.Players.TryGetPlayerById(new MyPlayer.PlayerId(MySteam.UserId, playerNumber));
+                var player = Sync.Players.GetPlayerById(new MyPlayer.PlayerId(Sync.MyId, playerNumber));
                 Sync.Players.RemovePlayer(player);
             }
         }
 
-        public void RemoveBot(int playerNumber)
+        public void DespawnBotsOfType(string botType)
         {
-            m_removeQueue.Enqueue(playerNumber);
+            var allBots = m_botCollection.GetAllBots();
+            foreach (var entry in allBots)
+            {
+                if (entry.Value.BotDefinition.BehaviorType == botType)
+                {
+                    Sync.Players.GetPlayerById(new Sandbox.Game.World.MyPlayer.PlayerId(Sync.MyId, entry.Key));
+                    RemoveBot(entry.Key, removeCharacter: true);
+                }
+            }
+            PerformBotRemovals();
+        }
+
+        private void PerformBotRemovals()
+        {
+            BotRemovalRequest request;
+            while (m_removeQueue.TryDequeue(out request))
+            {
+                MyPlayer player = Sync.Players.GetPlayerById(new MyPlayer.PlayerId(Sync.MyId, request.SerialId));
+                if (player != null)
+                    Sync.Players.RemovePlayer(player, request.RemoveCharacter);
+            }
+        }
+
+        public void RemoveBot(int playerNumber, bool removeCharacter = false)
+        {
+            var request = new BotRemovalRequest();
+            request.SerialId = playerNumber;
+            request.RemoveCharacter = removeCharacter;
+
+            m_removeQueue.Enqueue(request);
         }
 
         void LocalPlayerRemoved(int playerNumber)
@@ -500,9 +633,9 @@ namespace Sandbox.Game.AI
 
             if (MyControllerHelper.IsControl(MySpaceBindingCreator.CX_CHARACTER, MyControlsSpace.PRIMARY_TOOL_ACTION))
             {
-                if (MySession.ControlledEntity != null && BotToSpawn != null)
+                if (MySession.Static.ControlledEntity != null && BotToSpawn != null)
                     TrySpawnBot();
-                if (MySession.ControlledEntity != null && CommandDefinition != null)
+                if (MySession.Static.ControlledEntity != null && CommandDefinition != null)
                     UseCommand();
             }
         }
@@ -533,9 +666,9 @@ namespace Sandbox.Game.AI
         {
             Vector3D cameraPos, cameraDir;
 
-            if (MySession.GetCameraControllerEnum() == Common.ObjectBuilders.MyCameraControllerEnum.ThirdPersonSpectator || MySession.GetCameraControllerEnum() == Common.ObjectBuilders.MyCameraControllerEnum.Entity)
+            if (MySession.Static.GetCameraControllerEnum() == MyCameraControllerEnum.ThirdPersonSpectator || MySession.Static.GetCameraControllerEnum() == MyCameraControllerEnum.Entity)
             {
-                var headMatrix = MySession.ControlledEntity.GetHeadMatrix(true, true);
+                var headMatrix = MySession.Static.ControlledEntity.GetHeadMatrix(true, true);
                 cameraPos = headMatrix.Translation;
                 cameraDir = headMatrix.Forward;
             }
@@ -547,7 +680,7 @@ namespace Sandbox.Game.AI
 
             List<MyPhysics.HitInfo> hitInfos = new List<MyPhysics.HitInfo>();
 
-            MyPhysics.CastRay(cameraPos, cameraPos + cameraDir * 100, hitInfos, MyPhysics.ObjectDetectionCollisionLayer);
+            MyPhysics.CastRay(cameraPos, cameraPos + cameraDir * 100, hitInfos, MyPhysics.CollisionLayers.ObjectDetectionCollisionLayer);
             if (hitInfos.Count == 0)
                 return;
 
@@ -594,9 +727,19 @@ namespace Sandbox.Game.AI
             return highestExistingPlayer + 1;
         }
 
+        public static int GenerateBotId()
+        {
+            int current = Static.m_lastBotId;
+            Static.m_lastBotId = GenerateBotId(current);
+            return Static.m_lastBotId;
+        }
+
         public void DebugDrawBots()
         {
-            m_botCollection.DebugDrawBots();
+            if (MyDebugDrawSettings.ENABLE_DEBUG_DRAW)
+            {
+                m_botCollection.DebugDrawBots();
+            }
         }
 
         public void DebugSelectNextBot()
@@ -613,9 +756,14 @@ namespace Sandbox.Game.AI
         {
             if (m_botCollection.HasBot)
             {
-                var player = Sync.Players.TryGetPlayerById(new MyPlayer.PlayerId(MySteam.UserId, m_botCollection.GetHandleToFirstBot()));
+                var player = Sync.Players.GetPlayerById(new MyPlayer.PlayerId(Sync.MyId, m_botCollection.GetHandleToFirstBot()));
                 Sync.Players.RemovePlayer(player);
             }
+        }
+
+        public double GetRandomDouble(double min, double max)
+        {
+            return Random.NextDouble() * (max - min) + min;
         }
 
         #region Tool message handling

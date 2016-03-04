@@ -9,12 +9,13 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using VRage.Game.Entity;
 using VRageMath;
 
 namespace Sandbox.Game.Multiplayer
 {
     [PreloadRequired]
-    class MySyncTextPanel : MySyncCubeBlock
+    class MySyncTextPanel : MySyncEntity
     {
         [ProtoContract]
         [MessageId(430, P2PMessageEnum.Reliable)]
@@ -180,7 +181,7 @@ namespace Sandbox.Game.Multiplayer
             if (block != null)
             {
                 block.FontSize = msg.FontSize;
-                Sync.Layer.SendMessageToAll(msg, MyTransportMessageEnum.Success);
+                Sync.Layer.SendMessageToAll(ref msg, MyTransportMessageEnum.Success);
             }
         }
         static void OnChangeFontSizeSucess(ref ChangeFontSizeMsg msg, MyNetworkClient sender)
@@ -211,7 +212,7 @@ namespace Sandbox.Game.Multiplayer
             if (block != null)
             {
                 block.ChangeInterval = msg.Interval;
-                Sync.Layer.SendMessageToAll(msg, MyTransportMessageEnum.Success);
+                Sync.Layer.SendMessageToAll(ref msg, MyTransportMessageEnum.Success);
             }
         }
         static void OnChangeIntervalSucess(ref ChangeIntervalMsg msg, MyNetworkClient sender)
@@ -253,7 +254,7 @@ namespace Sandbox.Game.Multiplayer
             if (block != null)
             {
                 block.RemoveItems(msg.Selection);
-                Sync.Layer.SendMessageToAll(msg, MyTransportMessageEnum.Success);
+                Sync.Layer.SendMessageToAll(ref msg, MyTransportMessageEnum.Success);
             }
         }
         static void OnRemoveSelectedImagesSucess(ref RemoveSelectedImagesMsg msg, MyNetworkClient sender)
@@ -285,7 +286,7 @@ namespace Sandbox.Game.Multiplayer
             if (block != null)
             {
                 block.SelectItems(msg.Selection);
-                Sync.Layer.SendMessageToAll(msg, MyTransportMessageEnum.Success);
+                Sync.Layer.SendMessageToAll(ref msg, MyTransportMessageEnum.Success);
             }
         }
         static void OnSelectImageSucess(ref SelectImagesMsg msg, MyNetworkClient sender)
@@ -302,10 +303,10 @@ namespace Sandbox.Game.Multiplayer
 
         static MySyncTextPanel()
         {
-            MySyncLayer.RegisterEntityMessage<MySyncTextPanel, ChangeDescriptionMsg>(OnChangeDescription, MyMessagePermissions.Any);
-            MySyncLayer.RegisterEntityMessage<MySyncTextPanel, ChangeTitleMsg>(OnChangeTitle, MyMessagePermissions.Any);
-            MySyncLayer.RegisterEntityMessage<MySyncTextPanel, ChangeAccessFlagMsg>(OnChangAccessFlag, MyMessagePermissions.Any);
-            MySyncLayer.RegisterEntityMessage<MySyncTextPanel, ChangeOpenMsg>(OnChangeOpen, MyMessagePermissions.Any);
+            MySyncLayer.RegisterEntityMessage<MySyncTextPanel, ChangeDescriptionMsg>(OnChangeDescription, MyMessagePermissions.ToServer | MyMessagePermissions.FromServer);
+            MySyncLayer.RegisterEntityMessage<MySyncTextPanel, ChangeTitleMsg>(OnChangeTitle, MyMessagePermissions.ToServer | MyMessagePermissions.FromServer);
+            MySyncLayer.RegisterEntityMessage<MySyncTextPanel, ChangeAccessFlagMsg>(OnChangAccessFlag, MyMessagePermissions.ToServer | MyMessagePermissions.FromServer);
+            MySyncLayer.RegisterEntityMessage<MySyncTextPanel, ChangeOpenMsg>(OnChangeOpen, MyMessagePermissions.ToServer | MyMessagePermissions.FromServer);
 
             MySyncLayer.RegisterMessage<ChangeIntervalMsg>(OnChangeIntervalRequest, MyMessagePermissions.ToServer, MyTransportMessageEnum.Request);
             MySyncLayer.RegisterMessage<ChangeIntervalMsg>(OnChangeIntervalSucess, MyMessagePermissions.FromServer, MyTransportMessageEnum.Success);
@@ -551,7 +552,7 @@ namespace Sandbox.Game.Multiplayer
             if (block != null)
             {
                 block.ShowTextFlag = (ShowTextOnScreenFlag)msg.Show;
-                Sync.Layer.SendMessageToAll(msg, MyTransportMessageEnum.Success);
+                Sync.Layer.SendMessageToAll(ref msg, MyTransportMessageEnum.Success);
             }
         }
         static void OnShowOnScreenSucess(ref ChangeShowOnScreenMsg msg, MyNetworkClient sender)

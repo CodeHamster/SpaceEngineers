@@ -23,7 +23,12 @@ using VRage.Serialization;
 using VRage.Trace;
 using ProtoBuf;
 using Sandbox.Common.ObjectBuilders.Definitions;
-
+using VRage.Library.Collections;
+using Sandbox.Game.Entities;
+using VRage.Network;
+using VRage.Library.Utils;
+using Sandbox.Game;
+using VRage.Game;
 
 #endregion
 
@@ -108,11 +113,13 @@ namespace Sandbox.Engine.Multiplayer
     {
         public readonly ISerializer<TMsg> Serializer;
         public readonly ControlMessageHandler<TMsg> Callback;
+        public readonly MyMessagePermissions Permission;
 
-        public MyControlMessageCallback(ControlMessageHandler<TMsg> callback, ISerializer<TMsg> serializer)
+        public MyControlMessageCallback(ControlMessageHandler<TMsg> callback, ISerializer<TMsg> serializer, MyMessagePermissions permission)
         {
             this.Callback = callback;
             this.Serializer = serializer;
+            this.Permission = permission;
         }
 
         public void Write(ByteStream destination, ref TMsg msg)
@@ -122,6 +129,11 @@ namespace Sandbox.Engine.Multiplayer
 
         void ITransportCallback.Receive(ByteStream source, ulong sender, TimeSpan timestamp)
         {
+            if (!MySyncLayer.CheckReceivePermissions(sender, Permission))
+            {
+                return;
+            }
+
             TMsg msg;
             try
             {
@@ -146,7 +158,7 @@ namespace Sandbox.Engine.Multiplayer
 
     #endregion
 
-
+    [PreloadRequired]
     public abstract class MyMultiplayerBase : IDisposable
     {
         public struct MyConnectedClientData
@@ -156,6 +168,7 @@ namespace Sandbox.Engine.Multiplayer
         }
 
         public readonly MySyncLayer SyncLayer;
+        public MyReplicationLayer ReplicationLayer { get; private set; }
 
         private MemoryStream m_worldSendStream;
         ByteStream m_controlReceiveStream;
@@ -177,14 +190,14 @@ namespace Sandbox.Engine.Multiplayer
 
         private int m_lastKickUpdate;
 
-        private HashSet<MySyncEntity> m_registeredEntities = new HashSet<MySyncEntity>();
-        private HashSet<MySyncEntity> m_newRegisteredEntities = new HashSet<MySyncEntity>();
+        private HashSet<MySyncEntity> m_dirtyPhysicsEntities = new HashSet<MySyncEntity>();
         Dictionary<int, ITransportCallback> m_controlMessageHandlers = new Dictionary<int, ITransportCallback>();
         Dictionary<Type, MyControlMessageEnum> m_controlMessageTypes = new Dictionary<Type, MyControlMessageEnum>();
 
         Dictionary<ulong, MyMultipartSender> m_worldSenders = new Dictionary<ulong, MyMultipartSender>();
 
         private TimeSpan m_lastSentTimeTimestamp = new TimeSpan();
+        private BitStream m_sendPhysicsStream = new BitStream();
 
         private const int KICK_TIMEOUT_MS = 300 * 1000; // A kick timeouts after five minutes
 
@@ -201,227 +214,67 @@ namespace Sandbox.Engine.Multiplayer
         }
         public abstract bool IsServer { get; }
 
-        public float ServerSimulationRatio = 1.0f;
-
-        public abstract string WorldName
+        float m_serverSimulationRatio = 1.0f;
+        public float ServerSimulationRatio
         {
-            get;
-            set;
+            get 
+            {
+                return (float)Math.Round(m_serverSimulationRatio, 2);
+            }
+            set 
+            {
+                m_serverSimulationRatio = value;
+            }
         }
 
-        public abstract MyGameModeEnum GameMode
-        {
-            get;
-            set;
-        }
+        public DictionaryReader<string, byte[]> VoxelMapData { get { return m_voxelMapData; } }
+        public uint FrameCounter { get; private set; }
 
-        public abstract float InventoryMultiplier
-        {
-            get;
-            set;
-        }
-
-        public abstract float AssemblerMultiplier
-        {
-            get;
-            set;
-        }
-
-        public abstract float RefineryMultiplier
-        {
-            get;
-            set;
-        }
-
-        public abstract float WelderMultiplier
-        {
-            get;
-            set;
-        }
-
-        public abstract float GrinderMultiplier
-        {
-            get;
-            set;
-        }
-
-        public abstract string HostName
-        {
-            get;
-            set;
-        }
-
-        public abstract ulong WorldSize
-        {
-            get;
-            set;
-        }
-
-        public abstract int AppVersion
-        {
-            get;
-            set;
-        }
-
-        public abstract string DataHash
-        {
-            get;
-            set;
-        }
-
-        public abstract int MaxPlayers
-        {
-            get;
-        }
-
-        public abstract int ModCount
-        {
-            get;
-            protected set;
-        }
-
-        public abstract List<MyObjectBuilder_Checkpoint.ModItem> Mods
-        {
-            get;
-            set;
-        }
-
-        public abstract int ViewDistance
-        {
-            get;
-            set;
-        }
-
-        public DictionaryReader<string, byte[]> VoxelMapData
-        {
-            get { return m_voxelMapData; }
-        }
-
-        public uint FrameCounter
-        {
-            get;
-            private set;
-        }
-
-        public abstract bool Scenario
-        {
-            get;
-            set;
-        }
-
-        public abstract string ScenarioBriefing
-        {
-            get;
-            set;
-        }
-
-        public abstract DateTime ScenarioStartTime
-        {
-            get;
-            set;
-        }
-
-        public abstract bool Battle
-        {
-            get;
-            set;
-        }
-
-        public abstract bool BattleCanBeJoined
-        {
-            get;
-            set;
-        }
-
-        public abstract ulong BattleWorldWorkshopId
-        {
-            get;
-            set;
-        }
-
-        public abstract int BattleFaction1MaxBlueprintPoints
-        {
-            get;
-            set;
-        }
-
-        public abstract int BattleFaction2MaxBlueprintPoints
-        {
-            get;
-            set;
-        }
-
-        public abstract int BattleFaction1BlueprintPoints
-        {
-            get;
-            set;
-        }
-
-        public abstract int BattleFaction2BlueprintPoints
-        {
-            get;
-            set;
-        }
-
-        public abstract int BattleMapAttackerSlotsCount
-        {
-            get;
-            set;
-        }
-
-        public abstract long BattleFaction1Id
-        {
-            get;
-            set;
-        }
-
-        public abstract long BattleFaction2Id
-        {
-            get;
-            set;
-        }
-
-        public abstract int BattleFaction1Slot
-        {
-            get;
-            set;
-        }
-
-        public abstract int BattleFaction2Slot
-        {
-            get;
-            set;
-        }
-
-        public abstract bool BattleFaction1Ready
-        {
-            get;
-            set;
-        }
-
-        public abstract bool BattleFaction2Ready
-        {
-            get;
-            set;
-        }
-
-        public abstract int BattleTimeLimit
-        {
-            get;
-            set;
-        }
-
+        public abstract string WorldName { get; set; }
+        public abstract MyGameModeEnum GameMode { get; set; }
+        public abstract float InventoryMultiplier { get; set; }
+        public abstract float AssemblerMultiplier { get; set; }
+        public abstract float RefineryMultiplier { get; set; }
+        public abstract float WelderMultiplier { get; set; }
+        public abstract float GrinderMultiplier { get; set; }
+        public abstract string HostName { get; set; }
+        public abstract ulong WorldSize { get; set; }
+        public abstract int AppVersion { get; set; }
+        public abstract string DataHash { get; set; }
+        public abstract int MaxPlayers { get; }
+        public abstract int ModCount { get; protected set; }
+        public abstract List<MyObjectBuilder_Checkpoint.ModItem> Mods { get; set; }
+        public abstract int ViewDistance { get; set; }
+        public abstract bool Scenario { get; set; }
+        public abstract string ScenarioBriefing { get; set; }
+        public abstract DateTime ScenarioStartTime { get; set; }
+        public abstract bool Battle { get; set; }
+        // Battle game remaining time in seconds.
+        public abstract float BattleRemainingTime { get; set; }
+        public abstract bool BattleCanBeJoined { get; set; }
+        public abstract ulong BattleWorldWorkshopId { get; set; }
+        public abstract int BattleFaction1MaxBlueprintPoints { get; set; }
+        public abstract int BattleFaction2MaxBlueprintPoints { get; set; }
+        public abstract int BattleFaction1BlueprintPoints { get; set; }
+        public abstract int BattleFaction2BlueprintPoints { get; set; }
+        public abstract int BattleMapAttackerSlotsCount { get; set; }
+        public abstract long BattleFaction1Id { get; set; }
+        public abstract long BattleFaction2Id { get; set; }
+        public abstract int BattleFaction1Slot { get; set; }
+        public abstract int BattleFaction2Slot { get; set; }
+        public abstract bool BattleFaction1Ready { get; set; }
+        public abstract bool BattleFaction2Ready { get; set; }
+        public abstract int BattleTimeLimit { get; set; }
 
         #endregion
 
         public abstract bool IsCorrectVersion();
-        
+
         public event Action<ulong> ClientJoined;
         public event Action<ulong, ChatMemberStateChangeEnum> ClientLeft;
         public event Action HostLeft;
         public event Action<ulong, string, ChatEntryTypeEnum> ChatMessageReceived;
         public event Action<ulong> ClientKicked;
-
 
         internal MyMultiplayerBase(MySyncLayer syncLayer)
         {
@@ -436,13 +289,24 @@ namespace Sandbox.Engine.Multiplayer
 
             MyNetworkReader.SetHandler(MyMultiplayer.ControlChannel, ControlMessageReceived);
 
-            RegisterControlMessage<MyControlWorldRequestMsg>(MyControlMessageEnum.WorldRequest, OnWorldRequest);
-            RegisterControlMessage<MyControlAckMessageMsg>(MyControlMessageEnum.Ack, OnAck);
-            RegisterControlMessage<MyControlKickClientMsg>(MyControlMessageEnum.Kick, OnClientKick);
-            RegisterControlMessage<MyControlDisconnectedMsg>(MyControlMessageEnum.Disconnected, OnDisconnectedClient);
-            RegisterControlMessage<MyControlBanClientMsg>(MyControlMessageEnum.Ban, OnClientBan);
-            RegisterControlMessage<MyControlPingMsg>(MyControlMessageEnum.Ping, OnPing);            
+            RegisterControlMessage<MyControlWorldRequestMsg>(MyControlMessageEnum.WorldRequest, OnWorldRequest, MyMessagePermissions.ToServer);
+            RegisterControlMessage<MyControlAckMessageMsg>(MyControlMessageEnum.Ack, OnAck, MyMessagePermissions.ToServer);
+            RegisterControlMessage<MyControlKickClientMsg>(MyControlMessageEnum.Kick, OnClientKick, MyMessagePermissions.FromServer | MyMessagePermissions.ToServer);
+            RegisterControlMessage<MyControlDisconnectedMsg>(MyControlMessageEnum.Disconnected, OnDisconnectedClient, MyMessagePermissions.FromServer | MyMessagePermissions.ToServer);
+            RegisterControlMessage<MyControlBanClientMsg>(MyControlMessageEnum.Ban, OnClientBan, MyMessagePermissions.FromServer | MyMessagePermissions.ToServer);
+            RegisterControlMessage<MyControlPingMsg>(MyControlMessageEnum.Ping, OnPing, MyMessagePermissions.FromServer | MyMessagePermissions.ToServer);
             //m_serializers[typeof(MyControlMessageData)] = new XmlSerializer(typeof(MyControlMessageData));
+
+            // TODO: Remove
+            //SyncLayer.TransportLayer.Register(MyMessageId.SERVER_UPDATE, OnServerPhysicsUpdate);
+        }
+
+        protected virtual void SetReplicationLayer(MyReplicationLayer layer)
+        {
+            if (ReplicationLayer != null)
+                throw new InvalidOperationException("Replication layer already set");
+            ReplicationLayer = layer;
+            ReplicationLayer.RegisterFromGameAssemblies();
         }
 
         public bool IsConnectionDirect
@@ -478,11 +342,11 @@ namespace Sandbox.Engine.Multiplayer
                 return SyncLayer.LastMessageFromServer;
             }
         }
-        
 
-        internal void RegisterControlMessage<T>(MyControlMessageEnum msg, ControlMessageHandler<T> handler) where T: struct
+
+        internal void RegisterControlMessage<T>(MyControlMessageEnum msg, ControlMessageHandler<T> handler, MyMessagePermissions permission) where T : struct
         {
-            MyControlMessageCallback<T> callback = new MyControlMessageCallback<T>(handler, MySyncLayer.GetSerializer<T>());
+            MyControlMessageCallback<T> callback = new MyControlMessageCallback<T>(handler, MySyncLayer.GetSerializer<T>(), permission);
             m_controlMessageHandlers.Add((int)msg, callback);
             m_controlMessageTypes.Add(typeof(T), msg);
         }
@@ -524,35 +388,32 @@ namespace Sandbox.Engine.Multiplayer
             MyControlMessageEnum messageEnum;
             m_controlMessageTypes.TryGetValue(typeof(T), out messageEnum);
             m_controlMessageHandlers.TryGetValue((int)messageEnum, out handler);
-            
+
+            var callback = ((MyControlMessageCallback<T>)handler);
+            if (!MySyncLayer.CheckSendPermissions(user, callback.Permission))
+            {
+                return;
+            }
+
+
             m_controlSendStream.Position = 0;
             m_controlSendStream.WriteUShort((ushort)messageEnum);
-
-            ((MyControlMessageCallback<T>)handler).Write(m_controlSendStream, ref message);
+            callback.Write(m_controlSendStream, ref message);
 
             if (!Peer2Peer.SendPacket(user, m_controlSendStream.Data, (int)m_controlSendStream.Position, P2PMessageEnum.Reliable, MyMultiplayer.ControlChannel))
             {
                 System.Diagnostics.Debug.Fail("P2P packet not sent");
             }
 
-           // Peer2Peer.SendPacket(user, (byte*)&msg, sizeof(ControlMessageStruct), P2PMessageEnum.Reliable, MyMultiplayer.ControlChannel);
+            // Peer2Peer.SendPacket(user, (byte*)&msg, sizeof(ControlMessageStruct), P2PMessageEnum.Reliable, MyMultiplayer.ControlChannel);
         }
 
-        internal void SendControlMessageToAllAndSelf<T>(ref T message) where T : struct
+        internal void SendControlMessageToAll<T>(ref T message, ulong exceptUserId = 0) where T : struct
         {
             for (int i = 0; i < MemberCount; i++)
             {
                 ulong member = GetMemberByIndex(i);
-                SendControlMessage(member, ref message);
-            }
-        }
-
-        internal void SendControlMessageToAll<T>(ref T message) where T : struct
-        {
-            for (int i = 0; i < MemberCount; i++)
-            {
-                ulong member = GetMemberByIndex(i);
-                if (member != MySteam.UserId)
+                if (member != Sync.MyId && member != exceptUserId)
                     SendControlMessage(member, ref message);
             }
         }
@@ -592,7 +453,7 @@ namespace Sandbox.Engine.Multiplayer
 
                 MyMultipartMessage.SendPreemble(sender, MyMultiplayer.WorldDownloadChannel);
 
-                MyObjectBuilder_World worldData = MySession.Static.GetWorld();
+                MyObjectBuilder_World worldData = MySession.Static.GetWorld(false);
                 var checkpoint = worldData.Checkpoint;
                 checkpoint.WorkshopId = null;
                 checkpoint.CharacterToolbar = null;
@@ -618,9 +479,10 @@ namespace Sandbox.Engine.Multiplayer
         void OnDisconnectedClient(ref MyControlDisconnectedMsg data, ulong sender)
         {
             RaiseClientLeft(data.Client, ChatMemberStateChangeEnum.Disconnected);
+            Console.WriteLine("Disconnected: " + sender);
         }
 
-        
+
         public virtual MyDownloadWorldResult DownloadWorld()
         {
             //MyTrace.Send(TraceWindow.Multiplayer, "World request sent");
@@ -699,26 +561,44 @@ namespace Sandbox.Engine.Multiplayer
             return userId == ServerId;
         }
 
-        public void RegisterForTick(MySyncEntity entity)
+        public void MarkPhysicsDirty(MySyncEntity entity)
         {
-            m_newRegisteredEntities.Add(entity);
+            if (IsServer)
+            {
+                m_dirtyPhysicsEntities.Add(entity);
+            }
+        }
+
+        public void ReportReplicatedObjects()
+        {
+            if (VRageRender.Profiler.MyRenderProfiler.ProfilerVisible)
+            {
+                ProfilerShort.Begin("ReportReplicatedObjects (only when profiler visible)");
+                ReplicationLayer.ReportReplicatedObjects();
+                ProfilerShort.End();
+            }
         }
 
         public virtual void Tick()
         {
             FrameCounter++;
 
+            ProfilerShort.Begin("SendSimulationInfo");
             if (MyFakes.ENABLE_MULTIPLAYER_CONSTRAINT_COMPENSATION && IsServer && FrameCounter % 2 == 0)
             {
                 MySyncGlobal.SendSimulationInfo();
             }
+            ProfilerShort.End();
 
+            ProfilerShort.Begin("SendElapsedGameTime");
             if (IsServer && (MySession.Static.ElapsedGameTime - m_lastSentTimeTimestamp).Seconds > 30)
             {
                 m_lastSentTimeTimestamp = MySession.Static.ElapsedGameTime;
                 MySyncGlobal.SendElapsedGameTime();
             }
+            ProfilerShort.End();
 
+            ProfilerShort.Begin("Client kick update");
             int currentTotalTime = MySandboxGame.TotalTimeInMilliseconds;
             if (currentTotalTime - m_lastKickUpdate > 20000)
             {
@@ -737,18 +617,76 @@ namespace Sandbox.Engine.Multiplayer
 
                 m_lastKickUpdate = currentTotalTime;
             }
+            ProfilerShort.End();
+            
+            ProfilerShort.Begin("ReplicationLayer.Update");
+            ReplicationLayer.Update();
+            ProfilerShort.End();
+            
+            // TODO: Remove
+            //if (IsServer)
+            //{
+            //    SendServerPhysicsUpdate();
+            //}
 
-            foreach (var e in m_registeredEntities)
-            {
-                e.Tick();
-            }
-            var old = m_registeredEntities;
-            m_registeredEntities = m_newRegisteredEntities;
-            m_newRegisteredEntities = old;
-            m_newRegisteredEntities.Clear();
+            ProfilerShort.Begin("TransportLayer.Tick");
+            Sync.Layer.TransportLayer.Tick();
+            ProfilerShort.End();
 
+            ProfilerShort.Begin("Trace, NetProfiler.Commit");
             VRage.Trace.MyTrace.Send(VRage.Trace.TraceWindow.Multiplayer, "============ Frame end ============");
+            NetProfiler.Commit();
+            ProfilerShort.End();
         }
+
+        //private void SendServerPhysicsUpdate()
+        //{
+        //    foreach (var e in m_dirtyPhysicsEntities)
+        //    {
+        //        if (e.ShouldSendPhysicsUpdate())
+        //        {
+        //            m_sendPhysicsStream.ResetWrite();
+        //            m_sendPhysicsStream.WriteInt64(e.Entity.EntityId);
+        //            e.SerializePhysics(m_sendPhysicsStream, null);
+
+        //            ulong except = e.GetResponsiblePlayer();
+
+        //            // TODO: coalesce
+        //            foreach (var client in Sync.Clients.GetClients())
+        //            {
+        //                if (client.SteamUserId != Sync.MyId && client.SteamUserId != except)
+        //                    Sync.Layer.TransportLayer.SendMessage(MyMessageId.SERVER_UPDATE, m_sendPhysicsStream, false, new EndpointId(client.SteamUserId));
+        //            }
+        //            e.SetPhysicsUpdateSent();
+        //        }
+        //    }
+
+        //    // Remove entities which are not moving for some time (6 updates with zero velocities sent = 2s)
+        //    m_dirtyPhysicsEntities.RemoveWhere(s => s.StationaryUpdatesCount > 6);
+        //}
+
+        //private void OnServerPhysicsUpdate(MyPacket packet)
+        //{
+        //    m_sendPhysicsStream.ResetRead(packet);
+
+        //    var entityId = m_sendPhysicsStream.ReadInt64();
+        //    MyEntity entity;
+        //    if (!MyEntities.TryGetEntityById(entityId, out entity))
+        //        return;
+
+        //    MyNetworkClient sender;
+        //    if (!Sync.Clients.TryGetClient(packet.Sender.Value, out sender))
+        //    {
+        //        Debug.Fail("Sender not found");
+        //        return;
+        //    }
+
+        //    MySyncEntity syncEntity = entity.SyncObject as MySyncEntity;
+        //    if (syncEntity == null)
+        //        return;
+
+        //    syncEntity.SerializePhysics(m_sendPhysicsStream, sender);
+        //}
 
         public abstract void SendChatMessage(string text);
 
@@ -759,6 +697,9 @@ namespace Sandbox.Engine.Multiplayer
             MyNetworkReader.ClearHandler(MyMultiplayer.ControlChannel);
             SyncLayer.TransportLayer.Clear();
             MyNetworkReader.Clear();
+
+            m_sendPhysicsStream.Dispose();
+            ReplicationLayer.Dispose();
 
             MyMultiplayer.Static = null;
         }
@@ -775,7 +716,7 @@ namespace Sandbox.Engine.Multiplayer
 
         public abstract ulong GetMemberByIndex(int memberIndex);
 
-        public abstract string GetMemberName(ulong steamUserID);        
+        public abstract string GetMemberName(ulong steamUserID);
 
         protected void RaiseChatMessageReceived(ulong steamUserID, string messageText, ChatEntryTypeEnum chatEntryType)
         {
@@ -787,21 +728,21 @@ namespace Sandbox.Engine.Multiplayer
         protected void RaiseHostLeft()
         {
             var handler = HostLeft;
-            if (handler != null) 
+            if (handler != null)
                 handler();
         }
 
         protected void RaiseClientLeft(ulong changedUser, ChatMemberStateChangeEnum stateChange)
         {
             var handler = ClientLeft;
-            if (handler != null) 
+            if (handler != null)
                 handler(changedUser, stateChange);
         }
 
         protected void RaiseClientJoined(ulong changedUser)
         {
             var handler = ClientJoined;
-            if (handler != null) 
+            if (handler != null)
                 handler(changedUser);
         }
 
@@ -809,7 +750,7 @@ namespace Sandbox.Engine.Multiplayer
         {
             var handler = ClientKicked;
             if (handler != null)
-            handler(user);
+                handler(user);
         }
 
         public abstract ulong LobbyId
@@ -821,11 +762,7 @@ namespace Sandbox.Engine.Multiplayer
         public abstract bool IsAdmin(ulong steamID);
         public abstract void SetOwner(ulong owner);
 
-        public abstract int MemberLimit
-        {
-            get;
-            set;
-        }
+        public abstract int MemberLimit { get; set; }
 
         public abstract LobbyTypeEnum GetLobbyType();
 
@@ -838,8 +775,10 @@ namespace Sandbox.Engine.Multiplayer
             for (int i = 0; i < MemberCount; i++)
             {
                 var member = GetMemberByIndex(i);
-                if (member != MySteam.UserId)
+                if (member != Sync.MyId && member == ServerId)
+                {
                     Peer2Peer.CloseSession(member);
+                }
             }
         }
 
@@ -877,5 +816,9 @@ namespace Sandbox.Engine.Multiplayer
             MySession.Static.Factions.LoadFactions(msg.Factions, true);
         }
 
+        protected MyClientState CreateClientState()
+        {
+            return Activator.CreateInstance(MyPerGameSettings.ClientStateType) as MyClientState;
+        }
     }
 }

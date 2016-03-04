@@ -1,8 +1,8 @@
-﻿using Sandbox.Common.ObjectBuilders.AI;
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using VRage.Game;
 
 namespace Sandbox.Common.AI
 {
@@ -68,6 +68,17 @@ namespace Sandbox.Common.AI
             this.ActionName = actionName;
             this.ActionType = type;
             ReturnsRunning = true;
+        }
+    }
+
+    [AttributeUsage(AttributeTargets.Class)]
+    public class MyBehaviorDescriptorAttribute : Attribute
+    {
+        public readonly string DescriptorCategory;
+
+        public MyBehaviorDescriptorAttribute(string category)
+        {
+            DescriptorCategory = category;
         }
     }
 }

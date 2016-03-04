@@ -19,6 +19,7 @@ using System.Net;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
+using VRage.Game;
 using VRage.Utils;
 using VRage.Trace;
 
@@ -140,6 +141,12 @@ namespace Sandbox.Engine.Multiplayer
             set;
         }
 
+        public override float BattleRemainingTime
+        {
+            get;
+            set;
+        }
+
         public override bool BattleCanBeJoined
         {
             get;
@@ -231,9 +238,8 @@ namespace Sandbox.Engine.Multiplayer
         internal MyDedicatedServer(IPEndPoint serverEndpoint)
             : base(new MySyncLayer(new MyTransportLayer(MyMultiplayer.GameEventChannel)))
         {
-            RegisterControlMessage<ChatMsg>(MyControlMessageEnum.Chat, OnChatMessage);
-            RegisterControlMessage<ServerDataMsg>(MyControlMessageEnum.ServerData, OnServerData);
-            RegisterControlMessage<JoinResultMsg>(MyControlMessageEnum.JoinResult, OnJoinResult);
+            RegisterControlMessage<ServerDataMsg>(MyControlMessageEnum.ServerData, OnServerData, MyMessagePermissions.FromServer);
+            RegisterControlMessage<JoinResultMsg>(MyControlMessageEnum.JoinResult, OnJoinResult, MyMessagePermissions.FromServer);
 
             Initialize(serverEndpoint);
         }
@@ -291,32 +297,44 @@ namespace Sandbox.Engine.Multiplayer
             SendControlMessageToAll(ref msg);
         }
 
-        void OnChatMessage(ref ChatMsg msg, ulong sender)
+        protected override void OnChatMessage(ref ChatMsg msg, ulong sender)
         {
+            bool debugCommands = !MyFinalBuildConstants.IS_OFFICIAL && MyFinalBuildConstants.IS_DEBUG;
+
+            msg.Author = sender;
             if (m_memberData.ContainsKey(sender))
             {
-                if (m_memberData[sender].IsAdmin)
+                if (m_memberData[sender].IsAdmin || debugCommands)
                 {
-                    if (msg.Text.ToLower() == "+save")
+                    if (msg.Text.Equals("+save", StringComparison.InvariantCultureIgnoreCase))
                     {
                         MySession.Static.Save();
                     }
-                    else
-                        if (msg.Text.ToLower().Contains("+unban"))
+                    else if (msg.Text.Contains("+unban", StringComparison.InvariantCultureIgnoreCase))
+                    {
+                        string[] parts = msg.Text.Split(' ');
+                        if (parts.Length > 1)
                         {
-                            string[] parts = msg.Text.Split(' ');
-                            if (parts.Length > 1)
+                            ulong user = 0;
+                            if (ulong.TryParse(parts[1], out user))
                             {
-                                ulong user = 0;
-                                if (ulong.TryParse(parts[1], out user))
-                                {
-                                    BanClient(user, false);
-                                }
+                                BanClient(user, false);
                             }
                         }
+                    }
+                }
+                if(debugCommands)
+                {
+                    MyServerDebugCommands.Process(msg.Text, msg.Author);
                 }
             }
+            if(msg.Text.Contains("+43Dump"))
+            {
+                MySession.InitiateDump();
+                return;
+            }
 
+            SendControlMessageToAll(ref msg, msg.Author);
             RaiseChatMessageReceived(sender, msg.Text, ChatEntryTypeEnum.ChatMsg);
         }
 

@@ -6,12 +6,14 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Reflection;
 using Sandbox.Common;
+using VRage.Game;
 using VRage.Plugins;
 using VRage.ObjectBuilders;
+using VRage.Game.Common;
 
 namespace Sandbox.Game.World
 {
-    public delegate void GlobalEventHandler(object sender);
+    public delegate void GlobalEventHandler(MyGlobalEventBase sender);
 
     [AttributeUsage(AttributeTargets.Method, AllowMultiple = true)]
     [Obfuscation(Feature = Obfuscator.NoRename, Exclude = true)]

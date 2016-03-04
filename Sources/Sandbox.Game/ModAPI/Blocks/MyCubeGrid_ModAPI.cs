@@ -4,12 +4,18 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using VRage.Game;
 using VRageMath;
 
 namespace Sandbox.Game.Entities
 {
     public partial class MyCubeGrid : IMyCubeGrid
     {
+        IMySlimBlock IMyCubeGrid.AddBlock(MyObjectBuilder_CubeBlock objectBuilder, bool testMerge)
+        {
+            return AddBlock(objectBuilder, testMerge);
+        }
+
         void IMyCubeGrid.ApplyDestructionDeformation(IMySlimBlock block)
         {
             if (block is MySlimBlock)
@@ -61,13 +67,6 @@ namespace Sandbox.Game.Entities
             return retVal;
         }
 
-        IMyCubeGrid IMyCubeGrid.MergeGrid_CopyPaste(IMyCubeGrid gridToMerge, VRageMath.MatrixI mergeTransform)
-        {
-            if (gridToMerge is MyCubeGrid)
-                return MergeGrid_CopyPaste(gridToMerge as MyCubeGrid, mergeTransform);
-            return null;
-        }
-
         IMyCubeGrid IMyCubeGrid.MergeGrid_MergeBlock(IMyCubeGrid gridToMerge, VRageMath.Vector3I gridOffset)
         {
             if (gridToMerge is MyCubeGrid)
@@ -103,7 +102,7 @@ namespace Sandbox.Game.Entities
             get { return SmallOwners; }
         }
 
-        void IMyCubeGrid.ChangeGridOwnership(long playerId, Common.ObjectBuilders.MyOwnershipShareModeEnum shareMode)
+        void IMyCubeGrid.ChangeGridOwnership(long playerId, MyOwnershipShareModeEnum shareMode)
         {
             ChangeGridOwnership(playerId, shareMode);
         }
@@ -153,7 +152,7 @@ namespace Sandbox.Game.Entities
             get { return GridSize; }
         }
 
-        Common.ObjectBuilders.MyCubeSize IMyCubeGrid.GridSizeEnum
+        MyCubeSize IMyCubeGrid.GridSizeEnum
         {
             get
             {

@@ -8,6 +8,8 @@ using VRage.Library.Utils;
 using VRage.Noise;
 using VRage.Voxels;
 using VRageMath;
+using Sandbox.Common.ObjectBuilders;
+using VRage.Game;
 
 namespace Sandbox.Game.World.Generator
 {
@@ -70,7 +72,7 @@ namespace Sandbox.Game.World.Generator
 
         protected override MyProceduralCell GenerateProceduralCell(ref VRageMath.Vector3I cellId)
         {
-            MyProceduralCell cell = new MyProceduralCell(cellId, this);
+            MyProceduralCell cell = new MyProceduralCell(cellId, this.CELL_SIZE);
             ProfilerShort.Begin("GenerateProceduralCell");
 
             IMyModule densityFunctionFilled = GetCellDensityFunctionFilled(cell.BoundingVolume);
@@ -101,9 +103,9 @@ namespace Sandbox.Game.World.Generator
                     {
                         var size = MathHelper.Lerp(PLANET_SIZE_MIN, PLANET_SIZE_MAX, random.NextDouble());
                         var objectSeed = new MyObjectSeed(cell, position, size);
-                        objectSeed.Type = MyObjectSeedType.Planet;
-                        objectSeed.Seed = random.Next();
-                        objectSeed.Index = 0;
+                        objectSeed.Params.Type = MyObjectSeedType.Planet;
+                        objectSeed.Params.Seed = random.Next();
+                        objectSeed.Params.Index = 0;
                         objectSeed.UserData = new MySphereDensityFunction(position, PLANET_SIZE_MAX / 2.0 * GRAVITY_SIZE_MULTIPLIER + FALLOFF, FALLOFF);
 
                         int index = 1;
@@ -128,7 +130,7 @@ namespace Sandbox.Game.World.Generator
                 ChildrenAddDensityFunctionRemoved(func);
             }
 
-            switch (objectSeed.Type)
+            switch (objectSeed.Params.Type)
             {
                 case MyObjectSeedType.Moon:
                     break;
@@ -149,9 +151,9 @@ namespace Sandbox.Game.World.Generator
                         if (value < MOON_DENSITY) // -1..+1
                         {
                             var clusterObjectSeed = new MyObjectSeed(cell, position, size);
-                            clusterObjectSeed.Seed = random.Next();
-                            clusterObjectSeed.Type = MyObjectSeedType.Moon;
-                            clusterObjectSeed.Index = index++;
+                            clusterObjectSeed.Params.Seed = random.Next();
+                            clusterObjectSeed.Params.Type = MyObjectSeedType.Moon;
+                            clusterObjectSeed.Params.Index = index++;
                             clusterObjectSeed.UserData = new MySphereDensityFunction(position, MOON_SIZE_MAX / 2.0 * GRAVITY_SIZE_MULTIPLIER + FALLOFF, FALLOFF);
 
                             bool overlaps = false;
@@ -182,30 +184,31 @@ namespace Sandbox.Game.World.Generator
 
         private List<MyVoxelBase> m_tmpVoxelMapsList = new List<MyVoxelBase>();
 
-        public override void GenerateObjects(List<MyObjectSeed> objectsList)
+        public override void GenerateObjects(List<MyObjectSeed> objectsList, HashSet<MyObjectSeedParams> existingObjectsSeeds)
         {
             ProfilerShort.Begin("GenerateObjects");
             foreach (var objectSeed in objectsList)
             {
-                if (objectSeed.Generated)
+                if (objectSeed.Params.Generated)
                     continue;
 
-                objectSeed.Generated = true;
+                objectSeed.Params.Generated = true;
 
                 using (MyRandom.Instance.PushSeed(GetObjectIdSeed(objectSeed)))
                 {
-                    ProfilerShort.Begin(objectSeed.Type.ToString());
+                    ProfilerShort.Begin(objectSeed.Params.Type.ToString());
 
                     var bbox = objectSeed.BoundingVolume;
                     MyGamePruningStructure.GetAllVoxelMapsInBox(ref bbox, m_tmpVoxelMapsList);
 
-                    String storageName = string.Format("{0}_{1}_{2}_{3}_{4}_{5}", objectSeed.Type, objectSeed.CellId.X, objectSeed.CellId.Y, objectSeed.CellId.Z, objectSeed.Index, objectSeed.Seed);
+                    String storageName = string.Format("{0}_{1}_{2}_{3}_{4}_{5}", objectSeed.Params.Type, objectSeed.CellId.X, objectSeed.CellId.Y, objectSeed.CellId.Z, objectSeed.Params.Index, objectSeed.Params.Seed);
 
                     bool exists = false;
                     foreach (var voxelMap in m_tmpVoxelMapsList)
                     {
                         if (voxelMap.StorageName == storageName)
                         {
+                            existingObjectsSeeds.Add(objectSeed.Params);
                             exists = true;
                             break;
                         }
@@ -214,7 +217,7 @@ namespace Sandbox.Game.World.Generator
 
                     if (!exists)
                     {
-                        var planet = MyWorldGenerator.AddPlanet(storageName, objectSeed.BoundingVolume.Center - VRageMath.MathHelper.GetNearestBiggerPowerOfTwo(objectSeed.Size) / 2, objectSeed.Seed, objectSeed.Size, GetPlanetEntityId(objectSeed), objectSeed.Type == MyObjectSeedType.Moon);
+                      /*  var planet = MyWorldGenerator.AddPlanet(storageName, objectSeed.BoundingVolume.Center - VRageMath.MathHelper.GetNearestBiggerPowerOfTwo(objectSeed.Size) / 2, objectSeed.Seed, objectSeed.Size, GetPlanetEntityId(objectSeed), objectSeed.Type == MyObjectSeedType.Moon);
 
                         if (planet == null)
                         {
@@ -227,7 +230,7 @@ namespace Sandbox.Game.World.Generator
                             planet.Save = true;
                             planet.Storage.RangeChanged -= OnStorageRangeChanged;
                         };
-                        planet.Storage.RangeChanged += OnStorageRangeChanged;
+                        planet.Storage.RangeChanged += OnStorageRangeChanged;*/
                     }
                     ProfilerShort.End();
                 }
@@ -244,7 +247,7 @@ namespace Sandbox.Game.World.Generator
             hash = (hash * 397) ^ (long)(Math.Sign(cellId.X) + TWIN_PRIME_MIDDLE1);
             hash = (hash * 397) ^ (long)(Math.Sign(cellId.Y) + TWIN_PRIME_MIDDLE2);
             hash = (hash * 397) ^ (long)(Math.Sign(cellId.Z) + TWIN_PRIME_MIDDLE3);
-            hash = (hash * 397) ^ (long)objectSeed.Index * BIG_PRIME1;
+            hash = (hash * 397) ^ (long)objectSeed.Params.Index * BIG_PRIME1;
 
             return hash & 0x00FFFFFFFFFFFFFF | ((long)MyEntityIdentifier.ID_OBJECT_TYPE.PLANET << 56);
         }
@@ -265,7 +268,7 @@ namespace Sandbox.Game.World.Generator
             var bbox = objectSeed.BoundingVolume;
             MyGamePruningStructure.GetAllVoxelMapsInBox(ref bbox, m_tmpVoxelMapsList);
 
-            String storageName = string.Format("{0}_{1}_{2}_{3}_{4}_{5}", objectSeed.Type, objectSeed.CellId.X, objectSeed.CellId.Y, objectSeed.CellId.Z, objectSeed.Index, objectSeed.Seed);
+            String storageName = string.Format("{0}_{1}_{2}_{3}_{4}_{5}", objectSeed.Params.Type, objectSeed.CellId.X, objectSeed.CellId.Y, objectSeed.CellId.Z, objectSeed.Params.Index, objectSeed.Params.Seed);
 
             foreach (var voxelBase in m_tmpVoxelMapsList)
             {

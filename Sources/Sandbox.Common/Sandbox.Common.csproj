@@ -107,21 +107,9 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="AI\IMyAiTarget.cs" />
-    <Compile Include="AI\MyAgentBotActionProxy.cs" />
-    <Compile Include="AI\MyAnimalBotActionProxy.cs" />
-    <Compile Include="AI\MyBarbarianBotActionProxy.cs" />
-    <Compile Include="AI\MyAbstractBotActionProxy.cs" />
     <Compile Include="AI\MyBehaviorTreeActionAttribute.cs" />
-    <Compile Include="AI\MyHumanoidBotActionProxy.cs" />
-    <Compile Include="AI\MyPeasantBotActionProxy.cs" />
     <Compile Include="Components\IMyNamedComponent.cs" />
-    <Compile Include="Components\IMyUserInputComponent.cs" />
-    <Compile Include="Components\MyGameLogicComponent.cs" />
     <Compile Include="Components\MyIngameScript.cs" />
-    <Compile Include="Components\MySessionComponentBase.cs" />
-    <Compile Include="Components\MySessionComponentMapping.cs" />
-    <Compile Include="ModAPI\IMyCamera.cs" />
     <Compile Include="ModAPI\IMyConfig.cs" />
     <Compile Include="ModAPI\IMyDamageSystem.cs" />
     <Compile Include="ModAPI\IMyGps.cs" />
@@ -142,7 +130,6 @@
     <Compile Include="ModAPI\IMyCubeBlock.cs" />
     <Compile Include="ModAPI\IMyCubeBuilder.cs" />
     <Compile Include="ModAPI\IMyCubeGrid.cs" />
-    <Compile Include="ModAPI\IMyEntities.cs" />
     <Compile Include="ModAPI\IMyFaction.cs" />
     <Compile Include="ModAPI\IMyFactionCollection.cs" />
     <Compile Include="ModAPI\IMyFloatingObject.cs" />
@@ -168,14 +155,12 @@
     <Compile Include="ModAPI\IMyUpgradableBlock.cs" />
     <Compile Include="ModAPI\IMyUpgradeModule.cs" />
     <Compile Include="ModAPI\IMyVirtualMass.cs" />
-    <Compile Include="ModAPI\IMyVoxelBase.cs" />
     <Compile Include="ModAPI\IMyVoxelShape.cs" />
     <Compile Include="ModAPI\IMyVoxelShapeBox.cs" />
     <Compile Include="ModAPI\IMyVoxelShapeCapsule.cs" />
     <Compile Include="ModAPI\IMyVoxelShapeRamp.cs" />
     <Compile Include="ModAPI\IMyVoxelShapeSphere.cs" />
     <Compile Include="ModAPI\Ingame\IMyAirVent.cs" />
-    <Compile Include="ModAPI\Ingame\IMyPowerProducer.cs" />
     <Compile Include="ModAPI\Ingame\IMyRadioAntenna.cs" />
     <Compile Include="ModAPI\Ingame\IMyAssembler.cs" />
     <Compile Include="ModAPI\Ingame\IMyBatteryBlock.cs" />
@@ -242,16 +227,15 @@
     <Compile Include="ModAPI\Ingame\TerminalActionParameter.cs" />
     <Compile Include="ModAPI\IMyHudNotification.cs" />
     <Compile Include="ModAPI\IMyMotorSuspension.cs" />
+    <Compile Include="ModAPI\IMyTextPanel.cs" />
     <Compile Include="ModAPI\Interfaces\IMyDestroyableObject.cs" />
     <Compile Include="ModAPI\IMyIdentity.cs" />
-    <Compile Include="ModAPI\Interfaces\IMyInventoryOwner.cs" />
     <Compile Include="ModAPI\IMyMultiplayer.cs" />
     <Compile Include="ModAPI\IMyNetworkClient.cs" />
     <Compile Include="ModAPI\IMyPlayerCollection.cs" />
     <Compile Include="ModAPI\Ingame\IMyButtonPanel.cs" />
     <Compile Include="ModAPI\Ingame\IMyDoor.cs" />
     <Compile Include="ModAPI\Ingame\IMyFunctionalBlock.cs" />
-    <Compile Include="ModAPI\Interfaces\IMyInventory.cs" />
     <Compile Include="ModAPI\Ingame\IMyLandingGear.cs" />
     <Compile Include="ModAPI\Ingame\IMyMotorStator.cs" />
     <Compile Include="ModAPI\Ingame\IMyPistonBase.cs" />
@@ -270,19 +254,11 @@
     <Compile Include="ModAPI\Ingame\IMyTerminalBlock.cs" />
     <Compile Include="ModAPI\Interfaces\IControllableEntity.cs" />
     <Compile Include="ModAPI\Interfaces\IMyCameraController.cs" />
-    <Compile Include="ModAPI\Interfaces\IMyInventoryItem.cs" />
-    <Compile Include="ModAPI\Interfaces\IMyStorage.cs" />
     <Compile Include="ModAPI\Interfaces\ITerminalProperty.cs" />
     <Compile Include="ModAPI\Interfaces\ITerminalAction.cs" />
     <Compile Include="ModAPI\MyAPIGateway.cs" />
     <Compile Include="ModAPI\MyDamageInformation.cs" />
     <Compile Include="ModAPI\MyHitInfo.cs" />
-    <Compile Include="Models\IMyTriangePruningStructure.cs" />
-    <Compile Include="Models\MyIntersectionResultLineTriangle.cs" />
-    <Compile Include="Models\MyMesh.cs" />
-    <Compile Include="Models\MyMeshMaterial.cs" />
-    <Compile Include="MyDefinitionErrors.cs" />
-    <Compile Include="MyEngineConstants.cs" />
     <Compile Include="MyEnums.cs" />
     <Compile Include="MyFinalBuildConstants.cs" />
     <Compile Include="MyMultiplayerWorldData.cs" />
@@ -323,6 +299,10 @@
     </BootstrapperPackage>
   </ItemGroup>
   <ItemGroup>
+    <ProjectReference Include="..\SpaceEngineers.ObjectBuilders\SpaceEngineers.ObjectBuilders.csproj">
+      <Project>{e48feb99-6814-4947-8035-8c2b4066dd9b}</Project>
+      <Name>SpaceEngineers.ObjectBuilders</Name>
+    </ProjectReference>
     <ProjectReference Include="..\VRage.Game\VRage.Game.csproj">
       <Project>{4539b5f0-3316-40e6-b032-9fbcafaac5be}</Project>
       <Name>VRage.Game</Name>
@@ -343,7 +323,10 @@
   <ItemGroup>
     <Service Include="{508349B6-6B84-4DF5-91F0-309BEEBAD82D}" />
   </ItemGroup>
-  <ItemGroup />
+  <ItemGroup>
+    <Folder Include="ModAPI\Interfaces\Gui\" />
+    <Folder Include="Models\" />
+  </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
   <!-- To modify your build process, add your task inside one of the targets below and uncomment it. 
        Other similar extension points exist, see Microsoft.Common.targets.

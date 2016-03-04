@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -178,6 +179,51 @@ namespace VRage.Import
             }
 
             return true;
+        }
+
+        public MyFacingEnum Facing
+        {
+            get
+            {
+                string facingVal;
+                if (UserData.TryGetValue("Facing", out facingVal))
+                {
+                    MyFacingEnum facing;
+                    if (!Enum.TryParse(facingVal, out facing))
+                        return MyFacingEnum.None;
+
+                    return facing;
+                }
+
+                return MyFacingEnum.None;
+            }
+        }
+
+        public Vector2 WindScaleAndFreq
+        {
+            get
+            {
+                string windScaleVal;
+                Vector2 windScaleAndFreq = Vector2.Zero;
+                if (UserData.TryGetValue("WindScale", out windScaleVal))
+                {
+                    float f;
+                    if (!float.TryParse(windScaleVal, NumberStyles.Any, CultureInfo.InvariantCulture, out f))
+                        return windScaleAndFreq;
+
+                    windScaleAndFreq.X = f;
+
+                    if (UserData.TryGetValue("WindFrequency", out windScaleVal))
+                    {
+                        if (!float.TryParse(windScaleVal, NumberStyles.Any, CultureInfo.InvariantCulture, out f))
+                            return windScaleAndFreq;
+                    }
+
+                    windScaleAndFreq.Y = f;
+                }
+
+                return windScaleAndFreq;
+            }
         }
     }
 }

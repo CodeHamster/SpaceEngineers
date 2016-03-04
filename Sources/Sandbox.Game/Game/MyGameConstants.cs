@@ -5,6 +5,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
+using VRage.Game;
 using VRage.Utils;
 using VRage.Voxels;
 using VRageMath;
@@ -109,12 +110,13 @@ namespace Sandbox.Game
         public const MyParticleEffectsIDEnum DRILL_SHIP_SPARKS_EFFECT = MyParticleEffectsIDEnum.Collision_Sparks;
 
         //public const float DRILL_UPDATE_INTERVAL_IN_MILISECONDS = 150;
-        public const int DRILL_UPDATE_INTERVAL_IN_FRAMES = 30;
+        public const int DRILL_UPDATE_INTERVAL_IN_FRAMES = 150;
         public const int DRILL_UPDATE_DISTRIBUTION_IN_FRAMES = 10;
-        public const float DRILL_UPDATE_INTERVAL_IN_MILISECONDS = 500;
-        public const float DRILL_RELEASE_TIME_IN_MILISECONDS = 550; // Should be higher than update interval, otherwise sound stops every once in a while.
+        public const float DRILL_UPDATE_INTERVAL_IN_MILISECONDS = 1500;
+        public const float DRILL_RELEASE_TIME_IN_MILISECONDS = 1550; // Should be higher than update interval, otherwise sound stops every once in a while.
         public const float PARTICLE_EFFECT_DURATION = 500;
-        public const float VOXEL_HARVEST_RATIO = 0.01f;
+        public const float VOXEL_HARVEST_RATIO = 0.009f;
+        public const float MAX_DROP_CUBIC_METERS = 0.150f;
 
         public const float WHOLE_VOXEL_HARVEST_VOLUME = VOXEL_HARVEST_RATIO * MyVoxelConstants.VOXEL_VOLUME_IN_METERS;
     }
@@ -156,7 +158,7 @@ namespace Sandbox.Game
 
     public static class MyEnergyConstants
     {
-        public const float BATTERY_MAX_POWER_OUTPUT = 10.0f / 50000; // MW
+        public const float BATTERY_MAX_POWER_OUTPUT = 45.0f / 5000; // MW
         public const float BATTERY_MAX_POWER_INPUT = 90.0f / 50000; // MW
         public const float BATTERY_MAX_CAPACITY = 0.5f / 50000; // MWh
         public const float REQUIRED_INPUT_HAND_DRILL = 2.0f / 50000; // MW
@@ -190,15 +192,15 @@ namespace Sandbox.Game
 
     public static class MyDebrisConstants
     {
-        public const int EXPLOSION_DEBRIS_LIFESPAN_MIN_IN_MILISECONDS = 2000;
-        public const int EXPLOSION_DEBRIS_LIFESPAN_MAX_IN_MILISECONDS = 2500;
+        public const int EXPLOSION_DEBRIS_LIFESPAN_MIN_IN_MILISECONDS = 5000;
+        public const int EXPLOSION_DEBRIS_LIFESPAN_MAX_IN_MILISECONDS = 10000;
         public const int EXPLOSION_DEBRIS_OBJECTS_MAX = 150;
         public const float EXPLOSION_DEBRIS_INITIAL_SPEED_MIN = 4.0f;
         public const float EXPLOSION_DEBRIS_INITIAL_SPEED_MAX = 8.0f;
         public const float EXPLOSION_MODEL_DEBRIS_INITIAL_SCALE_MIN = 0.25f;
-        public const float EXPLOSION_MODEL_DEBRIS_INITIAL_SCALE_MAX = 1.0f;
+        public const float EXPLOSION_MODEL_DEBRIS_INITIAL_SCALE_MAX = 0.75f;
         public const float EXPLOSION_VOXEL_DEBRIS_INITIAL_SCALE_MIN = 0.25f;
-        public const float EXPLOSION_VOXEL_DEBRIS_INITIAL_SCALE_MAX = 1.0f;
+        public const float EXPLOSION_VOXEL_DEBRIS_INITIAL_SCALE_MAX = 0.5f;
 
         public const int EXPLOSION_VOXEL_DEBRIS_OFFSET_COUNT = 2;
         public const int EXPLOSION_VOXEL_DEBRIS_OFFSET_COUNT_3 = EXPLOSION_VOXEL_DEBRIS_OFFSET_COUNT * EXPLOSION_VOXEL_DEBRIS_OFFSET_COUNT * EXPLOSION_VOXEL_DEBRIS_OFFSET_COUNT;

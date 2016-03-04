@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using System.Text;
+using VRage.Game.Common;
 using VRage.Game.ObjectBuilders;
 using VRage.ObjectBuilders;
 using VRage.Plugins;
@@ -27,7 +28,7 @@ namespace Sandbox.Game.World
             m_objectFactory.RegisterFromAssembly(Assembly.GetAssembly(typeof(MyEnvironmentalParticleLogic)));
 
             m_objectFactory.RegisterFromAssembly(MyPlugins.GameAssembly);
-       //     m_objectFactory.RegisterFromAssembly(MyPlugins.SandboxAssembly); //TODO: Will be removed 
+            m_objectFactory.RegisterFromAssembly(MyPlugins.SandboxAssembly); //TODO: Will be removed 
             m_objectFactory.RegisterFromAssembly(MyPlugins.UserAssembly);
         }
 

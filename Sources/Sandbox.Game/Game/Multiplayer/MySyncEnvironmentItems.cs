@@ -1,5 +1,6 @@
 ﻿using Sandbox.Engine.Multiplayer;
 using Sandbox.Engine.Networking;
+using Sandbox.Engine.Utils;
 using Sandbox.Game.Entities;
 using Sandbox.Game.Entities.EnvironmentItems;
 using Sandbox.Game.World;
@@ -9,6 +10,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Text;
+using VRage.Game.Entity;
 using VRage.Utils;
 using VRageMath;
 
@@ -29,7 +31,7 @@ namespace Sandbox.Game.Multiplayer
         {
             public long EntityId;
             public int InstanceId;
-            public int ModelId;
+            public MyStringHash SubtypeId;
         }
 
         [MessageId(3255, P2PMessageEnum.Reliable)]
@@ -44,7 +46,6 @@ namespace Sandbox.Game.Multiplayer
             public long EntityId;
             public Vector3D Position;
             public MyStringHash SubtypeId;
-            public int LocalModelId;
         }
 
         [MessageId(3257, P2PMessageEnum.Reliable)]
@@ -52,10 +53,17 @@ namespace Sandbox.Game.Multiplayer
         {
             public long EntityId;
             public int LocalId;
-            public int LocalModelId;
+            public MyStringHash SubtypeId;
+        }
+        
+        [MessageId(3258, P2PMessageEnum.Reliable)]
+        struct BatchRemoveItemMsg
+        {
+            public long EntityId;
+            public int LocalId;
         }
 
-        [MessageId(3258, P2PMessageEnum.Reliable)]
+        [MessageId(3259, P2PMessageEnum.Reliable)]
         struct EndBatchMsg
         {
             public long EntityId;
@@ -65,11 +73,12 @@ namespace Sandbox.Game.Multiplayer
 
         static MySyncEnvironmentItems()
         {
-            MySyncLayer.RegisterMessage<RemoveEnvironmentItemMsg>(OnRemoveEnvironmentItemMessage, MyMessagePermissions.Any, MyTransportMessageEnum.Request);
+            MySyncLayer.RegisterMessage<RemoveEnvironmentItemMsg>(OnRemoveEnvironmentItemMessage, MyMessagePermissions.FromServer|MyMessagePermissions.ToServer, MyTransportMessageEnum.Request);
             MySyncLayer.RegisterMessage<ModifyModelMsg>(OnModifyModelMessage, MyMessagePermissions.FromServer, MyTransportMessageEnum.Request);
             MySyncLayer.RegisterMessage<BeginBatchMsg>(OnBeginBatchAddMessage, MyMessagePermissions.FromServer, MyTransportMessageEnum.Request);
             MySyncLayer.RegisterMessage<BatchAddItemMsg>(OnBatchAddItemMessage, MyMessagePermissions.FromServer, MyTransportMessageEnum.Request);
             MySyncLayer.RegisterMessage<BatchModifyItemMsg>(OnBatchModifyItemMessage, MyMessagePermissions.FromServer, MyTransportMessageEnum.Request);
+            MySyncLayer.RegisterMessage<BatchRemoveItemMsg>(OnBatchRemoveItemMessage, MyMessagePermissions.FromServer, MyTransportMessageEnum.Request);
             MySyncLayer.RegisterMessage<EndBatchMsg>(OnEndBatchAddMessage, MyMessagePermissions.FromServer, MyTransportMessageEnum.Request);
         }
 
@@ -78,7 +87,14 @@ namespace Sandbox.Game.Multiplayer
             var msg = new RemoveEnvironmentItemMsg();
             msg.EntityId = entityId;
             msg.ItemInstanceId = itemInstanceId;
-            MySession.Static.SyncLayer.SendMessageToAll(ref msg);
+            if (!Sync.IsServer)
+            {
+                MySession.Static.SyncLayer.SendMessageToServer(ref msg);
+            }
+            else
+            {
+                MySession.Static.SyncLayer.SendMessageToAll(ref msg);
+            }
         }
 
         static void OnRemoveEnvironmentItemMessage(ref RemoveEnvironmentItemMsg msg, MyNetworkClient sender)
@@ -87,20 +103,31 @@ namespace Sandbox.Game.Multiplayer
             if (MyEntities.TryGetEntityById(msg.EntityId, out entity))
             {
                 if (OnRemoveEnvironmentItem != null)
+                {
                     OnRemoveEnvironmentItem(entity, msg.ItemInstanceId);
+                }
+
+                if (Sync.IsServer)
+                {
+                    Sync.Layer.SendMessageToAllButOne(ref msg, sender.SteamUserId);
+                }
+            }
+            else if (MyFakes.ENABLE_FLORA_COMPONENT_DEBUG)
+            {
+                System.Diagnostics.Debug.Fail("Received OnRemoveEnvironmentItemMessage to remove environment item, but entity wasn't found!");
             }
         }
 
-        public static void SendModifyModelMessage(long entityId, int instanceId, int modelId)
+        public static void SendModifyModelMessage(long entityId, int instanceId, MyStringHash subtypeId)
         {
             var msg = new ModifyModelMsg()
             {
                 EntityId = entityId,
                 InstanceId = instanceId,
-                ModelId = modelId,
+                SubtypeId = subtypeId,
             };
 
-            Sync.Layer.SendMessageToAllButOne(ref msg, MySteam.UserId, MyTransportMessageEnum.Request);
+            Sync.Layer.SendMessageToAllButOne(ref msg, Sync.MyId, MyTransportMessageEnum.Request);
         }
 
         static void OnModifyModelMessage(ref ModifyModelMsg msg, MyNetworkClient sender)
@@ -109,7 +136,11 @@ namespace Sandbox.Game.Multiplayer
             MyEnvironmentItems entity;
             if (MyEntities.TryGetEntityById<MyEnvironmentItems>(msg.EntityId, out entity))
             {
-                entity.ModifyItemModel(msg.InstanceId, msg.ModelId, true, false);
+                entity.ModifyItemModel(msg.InstanceId, msg.SubtypeId, true, false);
+            }
+            else if (MyFakes.ENABLE_FLORA_COMPONENT_DEBUG)
+            {
+                System.Diagnostics.Debug.Fail("Received OnModifyModelMessage, but entity wasn't found!");
             }
         }
 
@@ -120,7 +151,7 @@ namespace Sandbox.Game.Multiplayer
                 EntityId = entityId,
             };
 
-            Sync.Layer.SendMessageToAllButOne(ref msg, MySteam.UserId, MyTransportMessageEnum.Request);
+            Sync.Layer.SendMessageToAllButOne(ref msg, Sync.MyId, MyTransportMessageEnum.Request);
         }
 
         static void OnBeginBatchAddMessage(ref BeginBatchMsg msg, MyNetworkClient sender)
@@ -133,17 +164,16 @@ namespace Sandbox.Game.Multiplayer
             }
         }
 
-        public static void SendBatchAddItemMessage(long entityId, Vector3D position, MyStringHash subtypeId, int localModelId)
+        public static void SendBatchAddItemMessage(long entityId, Vector3D position, MyStringHash subtypeId)
         {
             var msg = new BatchAddItemMsg()
             {
                 EntityId = entityId,
                 Position = position,
-                SubtypeId = subtypeId,
-                LocalModelId = localModelId,
+                SubtypeId = subtypeId
             };
 
-            Sync.Layer.SendMessageToAllButOne(ref msg, MySteam.UserId, MyTransportMessageEnum.Request);
+            Sync.Layer.SendMessageToAllButOne(ref msg, Sync.MyId, MyTransportMessageEnum.Request);
         }
 
         static void OnBatchAddItemMessage(ref BatchAddItemMsg msg, MyNetworkClient sender)
@@ -152,20 +182,20 @@ namespace Sandbox.Game.Multiplayer
             MyEnvironmentItems entity;
             if (MyEntities.TryGetEntityById<MyEnvironmentItems>(msg.EntityId, out entity))
             {
-                entity.BatchAddItem(msg.Position, msg.SubtypeId, msg.LocalModelId, false);
+                entity.BatchAddItem(msg.Position, msg.SubtypeId, false);
             }
         }
 
-        public static void SendBatchModifyItemMessage(long entityId, int localId, int localModelId)
+        public static void SendBatchModifyItemMessage(long entityId, int localId, MyStringHash subtypeId)
         {
             var msg = new BatchModifyItemMsg()
             {
                 EntityId = entityId,
                 LocalId = localId,
-                LocalModelId = localModelId,
+                SubtypeId = subtypeId,
             };
 
-            Sync.Layer.SendMessageToAllButOne(ref msg, MySteam.UserId, MyTransportMessageEnum.Request);
+            Sync.Layer.SendMessageToAllButOne(ref msg, Sync.MyId, MyTransportMessageEnum.Request);
         }
 
         static void OnBatchModifyItemMessage(ref BatchModifyItemMsg msg, MyNetworkClient sender)
@@ -174,7 +204,28 @@ namespace Sandbox.Game.Multiplayer
             MyEnvironmentItems entity;
             if (MyEntities.TryGetEntityById<MyEnvironmentItems>(msg.EntityId, out entity))
             {
-                entity.BatchModifyItem(msg.LocalId, msg.LocalModelId, false);
+                entity.BatchModifyItem(msg.LocalId, msg.SubtypeId, false);
+            }
+        }
+
+        public static void SendBatchRemoveItemMessage(long entityId, int localId)
+        {
+            var msg = new BatchRemoveItemMsg()
+            {
+                EntityId = entityId,
+                LocalId = localId,
+            };
+
+            Sync.Layer.SendMessageToAllButOne(ref msg, Sync.MyId, MyTransportMessageEnum.Request);
+        }
+
+        static void OnBatchRemoveItemMessage(ref BatchRemoveItemMsg msg, MyNetworkClient sender)
+        {
+            Debug.Assert(!Sync.IsServer);
+            MyEnvironmentItems envItems;
+            if (MyEntities.TryGetEntityById<MyEnvironmentItems>(msg.EntityId, out envItems))
+            {
+                envItems.BatchRemoveItem(msg.LocalId, false);
             }
         }
 
@@ -185,7 +236,7 @@ namespace Sandbox.Game.Multiplayer
                 EntityId = entityId,
             };
 
-            Sync.Layer.SendMessageToAllButOne(ref msg, MySteam.UserId, MyTransportMessageEnum.Request);
+            Sync.Layer.SendMessageToAllButOne(ref msg, Sync.MyId, MyTransportMessageEnum.Request);
         }
 
         static void OnEndBatchAddMessage(ref EndBatchMsg msg, MyNetworkClient sender)

@@ -11,7 +11,6 @@ using Sandbox.Game.Entities.Character;
 using Sandbox.Game.Entities.Cube;
 using Sandbox.Game.Entities.UseObject;
 using Sandbox.Game.GameSystems;
-using Sandbox.Game.GameSystems.Electricity;
 using Sandbox.Game.Gui;
 using Sandbox.Game.GUI;
 using Sandbox.Game.Localization;
@@ -24,7 +23,8 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Text;
-using VRage.Components;
+using Sandbox.Game.EntityComponents;
+using VRage.Game.Components;
 using VRage.Game.Entity.UseObject;
 using VRage.Import;
 using VRage.ModAPI;
@@ -32,6 +32,15 @@ using VRage.Utils;
 using VRageMath;
 using IMyCameraController = Sandbox.ModAPI.Interfaces.IMyCameraController;
 using IMyDestroyableObject = Sandbox.ModAPI.Interfaces.IMyDestroyableObject;
+using IMyInventoryOwner = VRage.ModAPI.Ingame.IMyInventoryOwner;
+using VRage.Game.Models;
+using VRage.Game.Gui;
+using VRage.Game.Entity;
+using VRage.Network;
+using Sandbox.Engine.Multiplayer;
+using VRage;
+using VRage.Game;
+using VRage.ModAPI.Ingame;
 
 #endregion
 
@@ -47,18 +56,22 @@ namespace Sandbox.Game.Weapons
         Asteroids = 1 << 4,
         Missiles = 1 << 5,
         Moving = 1 << 6,
+        NotNeutrals = 1 << 7 //inverted for backwards compatibility
     }
 
     [MyCubeBlockType(typeof(MyObjectBuilder_TurretBase))]
-    abstract partial class MyLargeTurretBase : MyUserControllableGun, IMyGunObject<MyGunBase>, IMyPowerConsumer, IMyInventoryOwner, IMyCameraController, IMyControllableEntity, IMyUsableEntity, IMyGunBaseUser
+    public abstract partial class MyLargeTurretBase : MyUserControllableGun, IMyGunObject<MyGunBase>, VRage.ModAPI.Ingame.IMyInventoryOwner, IMyCameraController, IMyControllableEntity, IMyUsableEntity, IMyGunBaseUser
     {
-       
+        private bool m_hidetoolbar;
+
         interface IMyPredicionType
         {
-            bool ManualTargetPosition { get;}
+            bool ManualTargetPosition { get; }
 
             Vector3D GetPredictedTargetPosition(IMyEntity entity);
         }
+
+        private MyEntity3DSoundEmitter m_soundEmitterForRotation;
 
         class MyTargetPredictionType : IMyPredicionType
         {
@@ -69,9 +82,11 @@ namespace Sandbox.Game.Weapons
             //http://danikgames.com/blog/?p=809
             public Vector3D GetPredictedTargetPosition(IMyEntity target)
             {
-				Debug.Assert(target != null);
-				if (target == null)
-					return new Vector3D();
+                Debug.Assert(target != null);
+                if (target == null)
+                    return new Vector3D();
+                if (target.MarkedForClose)
+                    return target.PositionComp.GetPosition();
 
                 Vector3D predictedPosition = target.PositionComp.WorldAABB.Center;
 
@@ -169,7 +184,7 @@ namespace Sandbox.Game.Weapons
 
         class MyPositionNoPredictionType : IMyPredicionType
         {
-            public bool ManualTargetPosition { get { return true; }}
+            public bool ManualTargetPosition { get { return true; } }
 
             public Vector3D TrackedPosition { get; set; }
 
@@ -181,7 +196,7 @@ namespace Sandbox.Game.Weapons
 
         class MyPositionPredictionType : IMyPredicionType
         {
-            public bool ManualTargetPosition { get { return true; }}
+            public bool ManualTargetPosition { get { return true; } }
 
             public MyLargeTurretBase Turret { get; set; }
 
@@ -307,7 +322,7 @@ namespace Sandbox.Game.Weapons
         private float m_randomStandbyRotation;
         private float m_randomStandbyElevation;
         private bool m_randomIsMoving;
-        private double m_laserLength=100f;
+        private double m_laserLength = 100f;
         private int m_shootDelayIntervalConst_ms;
         private int m_shootIntervalConst_ms;
         private int m_shootStatusChanged_ms;
@@ -327,10 +342,10 @@ namespace Sandbox.Game.Weapons
         public MatrixD InitializationBarrelMatrix { get; set; }
         MyEntity m_target;
 
-        float m_shootingRange = 800;
+        readonly Sync<float> m_shootingRange;
         float m_searchingRange = 800;
         bool m_checkOtherTargets = true;
-        bool m_enableIdleRotation = true;
+        readonly Sync<bool> m_enableIdleRotation;
         bool m_previousIdleRotationState = true;
         // When large ship is controlled, owner is set to player ship which controls this large ship
         public MyEntity WeaponOwner { get; set; }
@@ -338,7 +353,7 @@ namespace Sandbox.Game.Weapons
         static int m_intervalShift = 0; //use this to avoid updating all weapons in one frame
 
         private MyDefinitionId m_defId;
-        
+
         protected MySoundPair m_shootingCueEnum = new MySoundPair();
         protected MySoundPair m_rotatingCueEnum = new MySoundPair();
 
@@ -346,42 +361,45 @@ namespace Sandbox.Game.Weapons
 
         protected Vector3D m_hitPosition;
 
-        protected MyInventory m_ammoInventory;
         protected MyGunBase m_gunBase;
 
-        internal new MySyncLargeTurret SyncObject
-        {
-            get { return (MySyncLargeTurret)base.SyncObject; }
-        }
-
         long m_targetToSet = 0;
-        IMyPredicionType m_currentPrediction = null;    
+        IMyPredicionType m_currentPrediction = null;
         IMyPredicionType m_targetNoPrediction = new MyTargetNoPredictionType();
         IMyPredicionType m_positionNoPrediction = new MyPositionNoPredictionType();
 
         IMyPredicionType m_targetPrediction = null;
         IMyPredicionType m_positionPrediction = null;
 
-        float m_minElevationRadians =0;
-        float m_maxElevationRadians = (float)(2.0*Math.PI);
-        float m_minAzimuthRadians =0;
-        float m_maxAzimuthRadians = (float)(2.0*Math.PI);
+        float m_minElevationRadians = 0;
+        float m_maxElevationRadians = (float)(2.0 * Math.PI);
+        float m_minAzimuthRadians = 0;
+        float m_maxAzimuthRadians = (float)(2.0 * Math.PI);
 
 
         float m_minRangeMeter = DEFAULT_MIN_RANGE;
         float m_maxRangeMeter = DEFAULT_MAX_RANGE;
         protected bool m_isControlled = false;
+
+        struct SyncRotationAndElevation
+        {
+            public float Rotation;
+            public float Elevation;
+        }
+
+        struct CurrentTargetSync
+        {
+            public long TargetId;
+            public bool IsPotential;
+        }
+
+        readonly Sync<SyncRotationAndElevation> m_rotationAndElevationSync;
+        readonly Sync<CurrentTargetSync> m_targetSync;
         #endregion
 
         #region Properties
 
- //       protected abstract MyAmmoCategoryEnum AmmoType { get; }
-
-        public MyPowerReceiver PowerReceiver
-        {
-            get;
-            private set;
-        }
+        //       protected abstract MyAmmoCategoryEnum AmmoType { get; }
 
         public MyLargeShipGunStatus GetStatus()
         {
@@ -512,7 +530,7 @@ namespace Sandbox.Game.Weapons
 
         protected abstract float ForwardCameraOffset { get; }
         protected abstract float UpCameraOffset { get; }
-        public MyLargeBarrelBase  Barrel { get { return m_barrel;}}
+        public MyLargeBarrelBase Barrel { get { return m_barrel; } }
 
         public MyGunBase GunBase
         {
@@ -527,18 +545,21 @@ namespace Sandbox.Game.Weapons
             }
             set
             {
-                if (m_enableIdleRotation != value)
-                {
-                    m_enableIdleRotation = value;
-                    RaisePropertiesChanged();
-                }
+                m_enableIdleRotation.Value = value;
             }
         }
 
+        readonly Sync<MyTurretTargetFlags> m_targetFlags;
         public MyTurretTargetFlags TargetFlags
         {
-            get;
-            set;
+            get
+            {
+                return m_targetFlags;
+            }
+            set
+            {
+                m_targetFlags.Value = value;
+            }
         }
         #endregion
 
@@ -568,29 +589,77 @@ namespace Sandbox.Game.Weapons
             m_positionPrediction = new MyPositionPredictionType(this);
 
             m_soundEmitter = new MyEntity3DSoundEmitter(this);
+            m_soundEmitterForRotation = new MyEntity3DSoundEmitter(this);
 
             ControllerInfo.ControlReleased += OnControlReleased;
 
-            m_outOfAmmoNotification = new MyHudNotification(MySpaceTexts.OutOfAmmo, 1000, level: MyNotificationLevel.Important);
+            m_gunBase = new MyGunBase();
+            m_outOfAmmoNotification = new MyHudNotification(MyCommonTexts.OutOfAmmo, 1000, level: MyNotificationLevel.Important);
 
-            NeedsUpdate = MyEntityUpdateEnum.EACH_FRAME | MyEntityUpdateEnum.BEFORE_NEXT_FRAME | MyEntityUpdateEnum.EACH_10TH_FRAME;
+            NeedsUpdate |= MyEntityUpdateEnum.EACH_FRAME | MyEntityUpdateEnum.BEFORE_NEXT_FRAME | MyEntityUpdateEnum.EACH_10TH_FRAME;
+
+            SyncType.Append(m_gunBase);
+
+            m_shootingRange.ValueChanged += (x) => ShootingRangeChanged();
+            m_rotationAndElevationSync.ValueChanged += (x) => RotationAndElevationSync();
+            m_targetSync.ValidateNever();
+            m_targetSync.ValueChanged +=  (x) => TargetChanged();
         }
 
+        void TargetChanged()
+        {
+            MyEntity target = null;
+            if (m_targetSync.Value.TargetId != 0)
+            {
+                MyEntities.TryGetEntityById(m_targetSync.Value.TargetId, out target);
+            }
+
+            SetTarget(target, m_targetSync.Value.IsPotential);
+        }
+
+        void RotationAndElevationSync()
+        {
+            UpdateRotationAndElevation(m_rotationAndElevationSync.Value.Rotation, m_rotationAndElevationSync.Value.Elevation);
+        }
+
+        void ShootingRangeChanged()
+        {
+            if (IsWorking && AiEnabled)
+            {
+                CheckNearTargets();
+            }
+        }
         public override void Init(MyObjectBuilder_CubeBlock objectBuilder, MyCubeGrid cubeGrid)
         {
             SyncFlag = true;
             var builder = (MyObjectBuilder_TurretBase)objectBuilder;
             var weaponBlockDefinition = base.BlockDefinition as MyWeaponBlockDefinition;
-           
-            if (weaponBlockDefinition != null)
-                m_ammoInventory = new MyInventory(weaponBlockDefinition.InventoryMaxVolume, new Vector3(0.4f, 0.4f, 0.4f), MyInventoryFlags.CanReceive, this);
-            else
-                m_ammoInventory = new MyInventory(6 * 64.0f / 1000, new Vector3(0.4f, 0.4f, 0.4f), MyInventoryFlags.CanReceive, this);
 
-            m_ammoInventory.Init(builder.Inventory);
+            if (MyFakes.ENABLE_INVENTORY_FIX)
+            {
+                FixSingleInventory();
+            }
 
-            m_gunBase = new MyGunBase();
+            if (this.GetInventory() == null)
+            {
+                if (weaponBlockDefinition != null)
+                    Components.Add<MyInventoryBase>(new MyInventory(weaponBlockDefinition.InventoryMaxVolume, new Vector3(0.4f, 0.4f, 0.4f), MyInventoryFlags.CanReceive, this));
+                else
+                    Components.Add<MyInventoryBase>(new MyInventory(6 * 64.0f / 1000, new Vector3(0.4f, 0.4f, 0.4f), MyInventoryFlags.CanReceive, this));
+
+                this.GetInventory().Init(builder.Inventory);
+            }
+            Debug.Assert(this.GetInventory().Owner == this, "Ownership was not set!");
+
+
             m_gunBase.Init(builder.GunBase, base.BlockDefinition, this);
+
+            var sinkComp = new MyResourceSinkComponent();
+            sinkComp.Init(
+                BlockDefinition.ResourceSinkGroup,
+                MyEnergyConstants.MAX_REQUIRED_POWER_TURRET,
+                () => (Enabled && IsFunctional) ? ResourceSink.MaxRequiredInput : 0.0f);
+            ResourceSink = sinkComp;
 
             base.Init(objectBuilder, cubeGrid);
 
@@ -602,7 +671,7 @@ namespace Sandbox.Game.Weapons
 
             m_defId = builder.GetId();
 
-            m_shootingRange = builder.Range;
+            m_shootingRange.Value = builder.Range;
             m_searchingRange = m_shootingRange + 100;
 
             TargetMeteors = builder.TargetMeteors;
@@ -612,14 +681,10 @@ namespace Sandbox.Game.Weapons
             TargetSmallGrids = builder.TargetSmallGrids;
             TargetLargeGrids = builder.TargetLargeGrids;
             TargetStations = builder.TargetStations;
-
-            PowerReceiver = new MyPowerReceiver(
-                MyConsumerGroupEnum.Defense,
-                false,
-                MyEnergyConstants.MAX_REQUIRED_POWER_TURRET,
-                () => (Enabled && IsFunctional) ? PowerReceiver.MaxRequiredInput : 0.0f);
-            PowerReceiver.IsPoweredChanged += Receiver_IsPoweredChanged;
-            PowerReceiver.Update();
+            TargetNeutrals = builder.TargetNeutrals;
+        
+            ResourceSink.IsPoweredChanged += Receiver_IsPoweredChanged;
+            ResourceSink.Update();
 
             SlimBlock.ComponentStack.IsFunctionalChanged += ComponentStack_IsFunctionalChanged;
 
@@ -655,32 +720,23 @@ namespace Sandbox.Game.Weapons
                 m_rotationSpeed = BlockDefinition.RotationSpeed;
                 m_elevationSpeed = BlockDefinition.ElevationSpeed;
 
-                m_enableIdleRotation = BlockDefinition.IdleRotation;
+                m_enableIdleRotation.Value = BlockDefinition.IdleRotation;
                 ClampRotationAndElevation();
             }
             //this must be & with block definition 
-            m_enableIdleRotation &= builder.EnableIdleRotation;
+            m_enableIdleRotation.Value &= builder.EnableIdleRotation;
 
             m_previousIdleRotationState = builder.PreviousIdleRotationState;
         }
 
         float NormalizeAngle(int angle)
         {
-            int retVal = angle% 360;
+            int retVal = angle % 360;
             if (retVal == 0 && angle != 0)
             {
                 return 360;
             }
             return retVal;
-        }
-
-        protected override MySyncEntity OnCreateSync()
-        {
-            var sync = new MySyncLargeTurret(this);
-            sync.UseSuccess += sync_UseSuccess;
-            sync.UseFailed += sync_UseFailed;
-            sync.ControlledEntity_Used += sync_ControlledEntity_Used;
-            return sync;
         }
 
         public override MyObjectBuilder_CubeBlock GetObjectBuilderCubeBlock(bool copy = false)
@@ -692,8 +748,8 @@ namespace Sandbox.Game.Weapons
             {
                 userGunBuilder.IsLargeTurret = true;
             }
-             
-            builder.Inventory = m_ammoInventory.GetObjectBuilder();
+
+            builder.Inventory = this.GetInventory().GetObjectBuilder();
             builder.Range = m_shootingRange;
             builder.RemainingAmmo = m_gunBase.CurrentAmmo;
             builder.Target = Target != null ? Target.EntityId : 0;
@@ -706,7 +762,8 @@ namespace Sandbox.Game.Weapons
             builder.TargetCharacters = TargetCharacters;
             builder.TargetSmallGrids = TargetSmallGrids;
             builder.TargetLargeGrids = TargetLargeGrids;
-            builder.TargetStations = TargetStations; 
+            builder.TargetStations = TargetStations;
+            builder.TargetNeutrals = TargetNeutrals;
 
             if (PreviousControlledEntity != null)
             {
@@ -734,6 +791,8 @@ namespace Sandbox.Game.Weapons
         {
             base.Closing();
 
+            ReleaseControl();
+
             Target = null;
 
             if (m_barrel != null)
@@ -741,7 +800,9 @@ namespace Sandbox.Game.Weapons
                 m_barrel.Close();
                 m_barrel = null;
             }
-            m_soundEmitter.StopSound(true);
+            if (m_soundEmitter != null)
+                m_soundEmitter.StopSound(true);
+            m_soundEmitterForRotation.StopSound(true);
         }
 
         #endregion
@@ -750,7 +811,7 @@ namespace Sandbox.Game.Weapons
 
         protected override bool CheckIsWorking()
         {
-            return PowerReceiver.IsPowered && base.CheckIsWorking();
+            return ResourceSink != null && ResourceSink.IsPowered && base.CheckIsWorking();
         }
 
 
@@ -776,13 +837,13 @@ namespace Sandbox.Game.Weapons
 
         protected override void OnEnabledChanged()
         {
-            PowerReceiver.Update();
+            ResourceSink.Update();
             base.OnEnabledChanged();
         }
 
         void ComponentStack_IsFunctionalChanged()
         {
-            PowerReceiver.Update();
+            ResourceSink.Update();
         }
 
         void Receiver_IsPoweredChanged()
@@ -823,8 +884,12 @@ namespace Sandbox.Game.Weapons
 
             if (m_savedPreviousControlledEntityId != null)
             {
-                TryFindSavedEntity();
-                m_savedPreviousControlledEntityId = null;
+                MySession.Static.Players.UpdatePlayerControllers(EntityId);
+                if (m_savedPreviousControlledEntityId != null)
+                {
+                    TryFindSavedEntity();
+                    m_savedPreviousControlledEntityId = null;
+                }
             }
             RotateModels();
         }
@@ -846,7 +911,6 @@ namespace Sandbox.Game.Weapons
                     return true;
                 }
             }
-
             return false;
         }
 
@@ -856,7 +920,7 @@ namespace Sandbox.Game.Weapons
 
             bool active = Render.IsVisible();
 
-            if (!MyFakes.ENABLE_GATLING_TURRETS || MyFakes.OCTOBER_RELEASE_DISABLE_WEAPONS_AND_TOOLS || !Sandbox.Game.World.MySession.Static.WeaponsEnabled)
+            if (!MyFakes.ENABLE_GATLING_TURRETS || !Sandbox.Game.World.MySession.Static.WeaponsEnabled)
                 active = false;
 
             if (active && IsWorking)
@@ -913,7 +977,7 @@ namespace Sandbox.Game.Weapons
                 m_resetInterpolationFlag = false;
             }
 
-            base.UpdateAfterSimulation();           
+            base.UpdateAfterSimulation();
 
             if (!IsWorking || Parent.Physics == null || !Parent.Physics.Enabled)
             {
@@ -976,14 +1040,15 @@ namespace Sandbox.Game.Weapons
 
             MyGunStatusEnum gunStatus = MyGunStatusEnum.Cooldown;
 
-            if (targetDistance < m_searchingRange|| m_currentPrediction.ManualTargetPosition)
+            if (targetDistance < m_searchingRange || m_currentPrediction.ManualTargetPosition)
             {
                 bool isAimed = RotationAndElevation() && CanShoot(out gunStatus) && Target != null && IsTargetVisible(Target);
                 UpdateShooting(isAimed && !m_isPotentialTarget);
             }
             else
             {
-                Deactivate();
+                if(!m_isShooting)
+                    Deactivate();
 
                 if (MySector.MainCamera.GetDistanceWithFOV(PositionComp.GetPosition()) <= MAX_DISTANCE_FOR_RANDOM_ROTATING_LARGESHIP_GUNS)
                 {
@@ -1002,11 +1067,11 @@ namespace Sandbox.Game.Weapons
 
                 if (m_status == MyLargeShipGunStatus.MyWeaponStatus_Shooting)
                 {
-                    m_canStopShooting = m_barrel.StartShooting();
+                    m_canStopShooting = (m_barrel.StartShooting() && m_soundEmitter != null && m_soundEmitter.Loop);
                 }
                 else if (m_status != MyLargeShipGunStatus.MyWeaponStatus_ShootDelaying)
                 {
-                    if (m_canStopShooting || ((m_soundEmitter.Sound != null) && m_soundEmitter.Sound.IsPlaying))
+                    if (m_canStopShooting || (m_soundEmitter != null && m_soundEmitter.Sound != null && m_soundEmitter.Sound.IsPlaying && m_soundEmitter.Loop))
                     {
                         m_barrel.StopShooting();
                         m_canStopShooting = false;
@@ -1016,7 +1081,7 @@ namespace Sandbox.Game.Weapons
             else
             {
                 m_status = MyLargeShipGunStatus.MyWeaponStatus_Searching;
-                if (m_canStopShooting || ((m_soundEmitter.Sound != null) && m_soundEmitter.Sound.IsPlaying))
+                if (m_canStopShooting || (m_soundEmitter != null && m_soundEmitter.Sound != null && m_soundEmitter.Sound.IsPlaying && m_soundEmitter.Loop))
                 {
                     m_barrel.StopShooting();
                     m_canStopShooting = false;
@@ -1027,11 +1092,15 @@ namespace Sandbox.Game.Weapons
         private void Deactivate()
         {
             m_status = MyLargeShipGunStatus.MyWeaponStatus_Deactivated;
-            if (m_canStopShooting || ((m_soundEmitter.Sound != null) && m_soundEmitter.Sound.IsPlaying))
+            if (m_soundEmitter == null)
+                return;
+            if (m_canStopShooting || ((m_soundEmitter.Sound != null) && m_soundEmitter.Sound.IsPlaying && m_soundEmitter.Loop))
             {
                 m_barrel.StopShooting();
                 m_canStopShooting = false;
             }
+            if (m_soundEmitterForRotation != null && m_soundEmitterForRotation.Sound != null && m_soundEmitterForRotation.IsPlaying)
+                m_soundEmitterForRotation.StopSound(true);
         }
 
         private void UpdateControlledWeapon()
@@ -1134,7 +1203,7 @@ namespace Sandbox.Game.Weapons
             }
         }
 
-     
+
 
         #endregion
 
@@ -1143,11 +1212,11 @@ namespace Sandbox.Game.Weapons
         private void RandomMovement()
         {
             System.Diagnostics.Debug.Assert(m_barrel != null);
-            if (m_barrel == null|| m_enableIdleRotation == false)
+            if (m_barrel == null || m_enableIdleRotation == false)
                 return;
 
             VRageRender.MyRenderProxy.GetRenderProfiler().StartProfilingBlock("MyLargeShipGunBase::RandomMovement");
-            
+
             ResetRandomAiming();
 
             // real rotation:
@@ -1170,7 +1239,7 @@ namespace Sandbox.Game.Weapons
                 m_rotation -= value;
                 playAimingSound = true;
             }
- 
+
             bool canElevate = false;
             step = m_elevationSpeed * m_elevationInterval_ms;
 
@@ -1238,18 +1307,18 @@ namespace Sandbox.Game.Weapons
             var from = head.Translation;
             var to = from + head.Forward * m_searchingRange;
             m_laserLength = m_searchingRange;
-            MyPhysics.HitInfo? hitInfo = null;
-            if (!MySandboxGame.IsDedicated)
-            {
-                hitInfo = MyPhysics.CastRay(from, to);
-            }
-            if (!hitInfo.HasValue)
-                m_hitPosition = to;
-            else
-            {
-                m_hitPosition = hitInfo.Value.Position;
-                m_laserLength = (m_hitPosition - from).Length();
-            }
+            //MyPhysics.HitInfo? hitInfo = null;
+            //if (!MySandboxGame.IsDedicated)
+            //{
+            //    hitInfo = MyPhysics.CastRay(from, to);
+            //}
+            //if (!hitInfo.HasValue)
+            m_hitPosition = to;
+            //else
+            //{
+            //    m_hitPosition = hitInfo.Value.Position;
+            //    m_laserLength = (m_hitPosition - from).Length();
+            //}
         }
 
 
@@ -1270,17 +1339,17 @@ namespace Sandbox.Game.Weapons
             if (m_base1 == null || m_barrel == null)
                 return;
 
-            ClampRotationAndElevation();
             VRageRender.MyRenderProxy.GetRenderProfiler().StartProfilingBlock("MyLargeShipGunBase::RotateModels");
+            ClampRotationAndElevation();
 
-            Matrix m = (Matrix)InitializationMatrixWorld;
+            Matrix m;// = (Matrix)InitializationMatrixWorld;
             Vector3D trans = m_base1.WorldMatrix.Translation;
             Matrix.CreateRotationY(m_rotation, out m);
             m.Translation = m_base1.PositionComp.LocalMatrix.Translation;
             //m *= Matrix.CreateFromAxisAngle(InitializationMatrixWorld.Up, m_rotation);
             //m.Translation = trans;
             m_base1.PositionComp.LocalMatrix = m;
-  
+
             Matrix.CreateRotationX(m_elevation, out m);
             m.Translation = m_base2.PositionComp.LocalMatrix.Translation;
             m_base2.PositionComp.LocalMatrix = m;
@@ -1326,14 +1395,14 @@ namespace Sandbox.Game.Weapons
                 predictedTargetPosition = m_currentPrediction.GetPredictedTargetPosition(Target);
                 lookAtPositionEuler = LookAt(predictedTargetPosition);
             }
-          
+
             // real rotation:
             float needRotation = lookAtPositionEuler.Y;
             float needElevation = lookAtPositionEuler.X;
             float step = m_rotationSpeed * (MySandboxGame.TotalGamePlayTimeInMilliseconds - m_rotationInterval_ms);
             float diffRot = needRotation - m_rotation;
-            
-                     
+
+
             if (diffRot > MathHelper.Pi)
             {
                 diffRot = diffRot - MathHelper.TwoPi;
@@ -1346,7 +1415,7 @@ namespace Sandbox.Game.Weapons
             float diffRotAbs = Math.Abs(diffRot);
 
             //bool needUpdateMatrix = false;
-           
+
 
             if (diffRotAbs > 0.001f)
             {
@@ -1365,8 +1434,8 @@ namespace Sandbox.Game.Weapons
                 m_rotation = m_rotation - MathHelper.TwoPi;
             else
                 if (m_rotation < -MathHelper.Pi)
-                    m_rotation = m_rotation + MathHelper.TwoPi;           
-            
+                    m_rotation = m_rotation + MathHelper.TwoPi;
+
             // real elevation
             step = m_elevationSpeed * (MySandboxGame.TotalGamePlayTimeInMilliseconds - m_elevationInterval_ms);
 
@@ -1475,32 +1544,37 @@ namespace Sandbox.Game.Weapons
 
         private void PlayAimingSound()
         {
-            m_soundEmitter.PlaySingleSound(m_rotatingCueEnum, true);
+            if (m_soundEmitterForRotation != null && m_soundEmitterForRotation.IsPlaying == false)
+                m_soundEmitterForRotation.PlaySingleSound(m_rotatingCueEnum, true);
         }
 
 
         internal void PlayShootingSound()
         {
-            m_gunBase.StartShootSound(m_soundEmitter);
+            if (m_soundEmitter != null)
+            {
+                StopAimingSound();
+                m_gunBase.StartShootSound(m_soundEmitter);
+            }
         }
 
         internal void StopShootingSound()
         {
-            if(m_soundEmitter.SoundId == m_shootingCueEnum.SoundId)
-                m_soundEmitter.StopSound(true);
+            if (m_soundEmitter != null && m_soundEmitter.SoundId == m_shootingCueEnum.SoundId && m_soundEmitter.Loop)
+                m_soundEmitter.StopSound(false);
         }
 
         internal void StopAimingSound()
         {
-            if(m_soundEmitter.SoundId == m_rotatingCueEnum.SoundId)
-                m_soundEmitter.StopSound(false);           
+            if (m_soundEmitterForRotation != null && m_soundEmitterForRotation.SoundId == m_rotatingCueEnum.SoundId)
+                m_soundEmitterForRotation.StopSound(false);
         }
 
         #endregion
 
         #region Intersection
 
-        internal override bool GetIntersectionWithLine(ref LineD line, out MyIntersectionResultLineTriangleEx? t, IntersectionFlags flags = IntersectionFlags.ALL_TRIANGLES)
+        public override bool GetIntersectionWithLine(ref LineD line, out MyIntersectionResultLineTriangleEx? t, IntersectionFlags flags = IntersectionFlags.ALL_TRIANGLES)
         {
             System.Diagnostics.Debug.Assert(!Closed);
 
@@ -1557,7 +1631,7 @@ namespace Sandbox.Game.Weapons
 
         protected int GetRemainingAmmo()
         {
-            // return RemainingAmmo + (int)m_ammoInventory.GetItemAmount(m_currentAmmoMagazineId) * AmmoInMagazine;
+            // return RemainingAmmo + (int)Inventory.GetItemAmount(m_currentAmmoMagazineId) * AmmoInMagazine;
             return m_gunBase.GetTotalAmmunitionAmount();
         }
 
@@ -1652,6 +1726,8 @@ namespace Sandbox.Game.Weapons
 
         private bool IsTarget(MyEntity entity)
         {
+            if (entity is Sandbox.Game.Entities.Debris.MyDebrisBase)
+                return false;
             if (!TargetCharacters && entity is MyCharacter)
                 return false;
 
@@ -1712,10 +1788,7 @@ namespace Sandbox.Game.Weapons
                 if (entity is MyDecoy)
                     return true;
 
-                if (entity is MyCharacter && !(entity as MyCharacter).IsDead)
-                    return true;
-
-                if (TargetCharacters && entity is MyCharacter)
+                if (TargetCharacters && entity is MyCharacter && !(entity as MyCharacter).IsDead)
                     return true;
 
                 if (TargetMeteors && entity is MyMeteor)
@@ -1734,24 +1807,39 @@ namespace Sandbox.Game.Weapons
 
         private bool IsTargetVisible(MyEntity target)
         {
-			if (target == null)
-				return false;
+            return IsTargetVisible(target, m_currentPrediction.GetPredictedTargetPosition(target));
+        }
+
+        private bool IsTargetVisible(MyEntity target, Vector3D predictedPos)
+        {
+            if (target == null)
+                return false;
 
             var head = WorldMatrix;
             var from = head.Translation - 0.4f * head.Up; //decrease by offset to muzzle
-			var to = target.PositionComp.GetPosition();
+            var to = predictedPos;
 
-            Vector3D pos;
-            Vector3 normal;
-            var physTarget = MyPhysics.CastRay(from, to);
+            if (target is MyCharacter)
+            {
+                to = to + Vector3.Transform(target.Physics.Center, target.WorldMatrix.GetOrientation());
+            }
 
+            VRage.ProfilerShort.Begin("RayCast");
+
+            var physTarget = MyPhysics.CastRay(from, to, MyPhysics.CollisionLayers.DefaultCollisionLayer);
+            //MyPhysics.HitInfo? physTarget = null;
+            //if (Sandbox.Game.Gui.MyMichalDebugInputComponent.Static.CastLongRay)
+            //    physTarget = MyPhysics.CastLongRay(from, to);
+            //else
+            //    physTarget = MyPhysics.CastRay(from, to, MyPhysics.CollisionLayers.DefaultCollisionLayer);
+            VRage.ProfilerShort.End();
             IMyEntity hitEntity = null;
 
             if (physTarget.HasValue)
             {
                 System.Diagnostics.Debug.Assert(physTarget.Value.HkHitInfo.Body.UserObject != null);
 
-                if (physTarget.Value.HkHitInfo.Body.UserObject != null)
+                if (physTarget.Value.HkHitInfo.Body != null && physTarget.Value.HkHitInfo.Body.UserObject != null && physTarget.Value.HkHitInfo.Body.UserObject is MyPhysicsBody)
                 {
                     hitEntity = ((MyPhysicsBody)physTarget.Value.HkHitInfo.Body.UserObject).Entity;
                 }
@@ -1761,59 +1849,112 @@ namespace Sandbox.Game.Weapons
 
             if (hitEntity == null || target == hitEntity || target.Parent == hitEntity || (target.Parent != null && target.Parent == hitEntity.Parent) || hitEntity is MyMissile || hitEntity is MyFloatingObject)
             {
+                m_notVisibleTargets.Remove(target);
+                return true;
+            }
+            var grid = hitEntity as MyCubeGrid;
+            if (grid != null && grid.BigOwners.Count == 0)
+            {
+                m_notVisibleTargets.Remove(target);
                 return true;
             }
 
+            if (m_notVisibleTargets.ContainsKey(target))
+                m_notVisibleTargets[target] = 2 * NotVisibleFrequency + VRage.Library.Utils.MyRandom.Instance.Next(NotVisibleFrequency);
+            else
+                m_notVisibleTargets[target] = NotVisibleFrequency + VRage.Library.Utils.MyRandom.Instance.Next(NotVisibleFrequency);
             return false;
         }
 
 
-        List<MyEntity> m_targetList = new List<MyEntity>();
+        Dictionary<MyEntity, int> m_notVisibleTargets = new Dictionary<MyEntity, int>();
+        const int NotVisibleFrequency = 5;
 
         private MyEntity GetNearestVisibleTarget(float range, bool onlyPotential)
         {
             if (!HasEnoughAmmo() && !MySession.Static.CreativeMode && !onlyPotential)
                 return null;
 
-            BoundingSphereD bs = new BoundingSphereD(PositionComp.GetPosition(), range);
-            m_targetList.Clear();
-            MyGamePruningStructure.GetAllTargetsInSphere(ref bs, m_targetList);
+            var targetList = CubeGrid.Components.Get<MyGridTargeting>().TargetRoots;
 
             MyEntity nearestTarget = null;
-            double minDistanceSq = double.MaxValue;
-            bool isDecoy = false;
+            double minDistanceSq = range * range;// double.MaxValue;
+            VRage.ProfilerShort.Begin("FindNearest");
 
-            foreach (var target in m_targetList)
+            bool foundDecoy = false;
+            foreach (var target in targetList)
             {
-                var dist = Vector3D.DistanceSquared(target.PositionComp.GetPosition(), PositionComp.GetPosition());
+                TestTarget(target, onlyPotential, ref nearestTarget, ref minDistanceSq, ref foundDecoy);
+            }
+            VRage.ProfilerShort.End(targetList.Count);
+            return nearestTarget;
+        }
 
-                if (IsDecoy(target) && IsTarget(target) && IsTargetEnemy(target) && IsTargetInView(target) && IsTargetVisible(target))
+        private void TestTarget(MyEntity target, bool onlyPotential, ref MyEntity nearestTarget, ref double minDistanceSq, ref bool foundDecoy)
+        {
+            if (target.MarkedForClose)
+                return;
+
+            var grid = target as MyCubeGrid;
+            if (grid != null)
+            {
+                if (grid.GridSystems.TerminalSystem == this.CubeGrid.GridSystems.TerminalSystem && grid.BigOwners.Contains(this.OwnerId))
+                    return; // Me
+
+                if(grid.PositionComp.WorldAABB.DistanceSquared(PositionComp.GetPosition()) > minDistanceSq)
+                    return; //none block closer than nearest target
+
+                var blockList = CubeGrid.Components.Get<MyGridTargeting>().TargetBlocks.GetList(grid);
+                if (blockList != null)
                 {
-                    if (!isDecoy || (isDecoy && dist < minDistanceSq))
+                    foreach (var block in blockList)
                     {
-                        nearestTarget = target;
-                        minDistanceSq = dist;
-                    }
-                    isDecoy = true;
-                }
-
-                if (isDecoy)
-                    continue;
-
-                if (!IsTargetAimed(target) && IsTarget(target) && IsTargetEnemy(target))
-                {
-                    if (onlyPotential || (!onlyPotential && IsTargetInView(target) && IsTargetVisible(target)))
-                    {
-                        if (dist < minDistanceSq)
-                        {
-                            minDistanceSq = dist;
-                            nearestTarget = target;
-                        }
+                        TestTarget(block, onlyPotential, ref nearestTarget, ref minDistanceSq, ref foundDecoy);
                     }
                 }
             }
 
-            return nearestTarget;
+            int delay;
+            if (!onlyPotential && m_notVisibleTargets.TryGetValue(target, out delay))
+            {
+                if (delay > 0)
+                {
+                    m_notVisibleTargets[target] = delay - 1;
+                    return;
+                }
+            }
+
+            bool isDecoy = IsDecoy(target);
+            if (foundDecoy && !isDecoy) //found decoy search only for closer decoy
+                return;
+            var dist = Vector3D.DistanceSquared(target.PositionComp.GetPosition(), PositionComp.GetPosition());
+
+            //we have closer target;
+            if (dist >= minDistanceSq)
+                return;
+
+            //only check targets
+            if (!(IsTarget(target) && IsTargetEnemy(target)))
+                return;
+
+            //when not just potentional check visibility
+            var predPos = m_currentPrediction.GetPredictedTargetPosition(target);
+            if (!onlyPotential && !(IsTargetInView(target, predPos) && IsTargetVisible(target, predPos)))
+                return;
+
+            if (isDecoy)
+            {
+                nearestTarget = target;
+                minDistanceSq = dist;
+                foundDecoy = true;
+                return;
+            }
+
+            if (!IsTargetAimed(target))
+            {
+                minDistanceSq = dist;
+                nearestTarget = target;
+            }
         }
 
         private bool IsDecoy(MyEntity target)
@@ -1833,12 +1974,15 @@ namespace Sandbox.Game.Weapons
                 && (target as IMyDestroyableObject).Integrity < 2 * m_gunBase.MechanicalDamage;
         }
 
-        private bool IsTargetInView(MyEntity target)
+        private bool IsTargetInView(MyEntity target, Vector3D predPos)
         {
-            var predPos = m_currentPrediction.GetPredictedTargetPosition(target);
+            VRage.ProfilerShort.Begin("InView");
+            //var predPos = m_currentPrediction.GetPredictedTargetPosition(target);
+            VRage.ProfilerShort.End();
             var lookAtPositionEuler = LookAt(predPos);
             float needElevation = lookAtPositionEuler.X;
-            if (needElevation > m_barrel.BarrelElevationMin && IsInRange(lookAtPositionEuler))
+
+            if (m_barrel != null && needElevation > m_barrel.BarrelElevationMin && IsInRange(lookAtPositionEuler))
             {
                 return true;
             }
@@ -1853,15 +1997,14 @@ namespace Sandbox.Game.Weapons
 
             if (target is MyCubeGrid)
             {
-                var radioAntennas = (target as MyCubeGrid).GetFatBlocks<MyRadioAntenna>();
-                foreach (var radioAntenna in radioAntennas)
+                if ((target as MyCubeGrid).BigOwners.Count == 0)
                 {
-                    MyRelationsBetweenPlayerAndBlock relation = GetUserRelationToOwner(radioAntenna.OwnerId);
-                    if (relation != MyRelationsBetweenPlayerAndBlock.Enemies)
-                        return false;
+                    return true;
                 }
-
-                return true;
+                else
+                {
+                    return false;
+                }
             }
 
             var moduleOwner = target as IMyComponentOwner<MyIDModule>;
@@ -1870,11 +2013,12 @@ namespace Sandbox.Game.Weapons
                 MyIDModule targetModule = null;
                 if (moduleOwner.GetComponent(out targetModule))
                 {
-                    MyRelationsBetweenPlayerAndBlock relation = GetUserRelationToOwner(targetModule.Owner);
-                    if (relation != MyRelationsBetweenPlayerAndBlock.Enemies)
+                    VRage.Game.MyRelationsBetweenPlayerAndBlock relation = GetUserRelationToOwner(targetModule.Owner);
+                    if (relation != VRage.Game.MyRelationsBetweenPlayerAndBlock.Enemies)
                         return false;
-                    else
-                        return true;
+                    if (!TargetNeutrals && targetModule.Owner == 0)
+                        return false;
+                    return true;
                 }
                 else
                     return false;
@@ -1882,8 +2026,10 @@ namespace Sandbox.Game.Weapons
 
             if (target is MyMissile)
             {
-                MyRelationsBetweenPlayerAndBlock relation = GetUserRelationToOwner((target as MyMissile).Owner);
-                if (relation != MyRelationsBetweenPlayerAndBlock.Enemies)
+                VRage.Game.MyRelationsBetweenPlayerAndBlock relation = GetUserRelationToOwner((target as MyMissile).Owner);
+                if (relation != VRage.Game.MyRelationsBetweenPlayerAndBlock.Enemies)
+                    return false;
+                if (!TargetNeutrals && (target as MyMissile).Owner == 0)
                     return false;
                 return true;
             }
@@ -1895,8 +2041,8 @@ namespace Sandbox.Game.Weapons
                     return false;
 
                 long targetPlayerId = controller.Player.Identity.IdentityId;
-                MyRelationsBetweenPlayerAndBlock relation = GetUserRelationToOwner(targetPlayerId);
-                if (relation != MyRelationsBetweenPlayerAndBlock.Enemies)
+                VRage.Game.MyRelationsBetweenPlayerAndBlock relation = GetUserRelationToOwner(targetPlayerId);
+                if (relation != VRage.Game.MyRelationsBetweenPlayerAndBlock.Enemies)
                     return false;
                 return true;
             }
@@ -1905,20 +2051,50 @@ namespace Sandbox.Game.Weapons
 
         private void CheckNearTargets()
         {
-            if (m_checkOtherTargets == false)         
+            if (m_checkOtherTargets == false)
             {
                 return;
             }
             VRageRender.MyRenderProxy.GetRenderProfiler().StartProfilingBlock("MyLargeShipGunBase::CheckNearTargets");
 
-            MyEntity nearestTarget = GetNearestVisibleTarget(m_searchingRange, true);
+            MyEntity nearestTarget = null;
+            float targetRange = 0;
+            if (Target != null)
+            {
+
+                targetRange = (float)GetTargetDistance();
+                if (targetRange >= m_searchingRange)
+                {
+                    nearestTarget = GetNearestVisibleTarget(m_searchingRange, true);
+                }
+                else
+                    nearestTarget = Target;
+            }
+            else
+                nearestTarget = GetNearestVisibleTarget(m_searchingRange, true);
+
             bool oldPotentialState = m_isPotentialTarget;
 
             m_isPotentialTarget = true;
 
             if (nearestTarget != null)
             {
-                var shootableTarget = GetNearestVisibleTarget(m_shootingRange, false);
+                MyEntity shootableTarget = null;
+                if (Target != null)
+                {
+                    if (IsTargetVisible(Target) && (float)GetTargetDistance() < m_shootingRange && IsTarget(Target))
+                    {
+                        shootableTarget = Target;
+                    }
+                    else
+                    {
+                        shootableTarget = GetNearestVisibleTarget(Math.Min(targetRange, m_shootingRange), false);
+                        if (shootableTarget == null)
+                            shootableTarget = GetNearestVisibleTarget(m_shootingRange, false);
+                    }
+                }
+                else
+                    shootableTarget = GetNearestVisibleTarget(m_shootingRange, false);
                 if (shootableTarget != null)
                 {
                     nearestTarget = shootableTarget;
@@ -1926,12 +2102,15 @@ namespace Sandbox.Game.Weapons
                 }
             }
 
+            //nearestTarget = GetNearestVisibleTarget(m_shootingRange, false);
+            //m_isPotentialTarget = false;
+
             if (m_isPotentialTarget != oldPotentialState && nearestTarget == Target)
             {
                 Target = null;
             }
 
-            if (MyFakes.FakeTarget != null && IsTargetVisible(MyFakes.FakeTarget))
+            if (MyFakes.FakeTarget != null && IsTargetVisible(MyFakes.FakeTarget, MyFakes.FakeTarget.WorldMatrix.Translation))
             {
                 Target = MyFakes.FakeTarget;
             }
@@ -1982,9 +2161,9 @@ namespace Sandbox.Game.Weapons
                             IconSize = new Vector2(0.02f, 0.02f)
                         };
 
-                        if (MySession.LocalCharacter != null)
+                        if (MySession.Static.LocalCharacter != null)
                         {
-                            if (!m_isPotentialTarget && HasLocalPlayerAccess() && (Vector3D.Distance(((MyEntity)MySession.LocalCharacter).PositionComp.GetPosition(), PositionComp.GetPosition()) < ShootingRange))
+                            if (!m_isPotentialTarget && HasLocalPlayerAccess() && (Vector3D.Distance(((MyEntity)MySession.Static.LocalCharacter).PositionComp.GetPosition(), PositionComp.GetPosition()) < ShootingRange))
                             {
                                 MyHud.LargeTurretTargets.RegisterMarker(m_target, hudParams);
                             }
@@ -1992,7 +2171,9 @@ namespace Sandbox.Game.Weapons
                     }
 
                     if (oldTarget != m_target && Sync.IsServer)
-                        SyncObject.SendChangeTarget(m_target == null ? 0 : m_target.EntityId, m_isPotentialTarget);
+                    {
+                        m_targetSync.Value  = new CurrentTargetSync(){TargetId = m_target == null ? 0 : m_target.EntityId, IsPotential = m_isPotentialTarget};
+                    }
                 }
             }
         }
@@ -2000,16 +2181,16 @@ namespace Sandbox.Game.Weapons
         public void SetTarget(MyEntity target, bool isPotential)
         {
             m_isPotentialTarget = isPotential;
-            Target = target;            
+            Target = target;
         }
 
         void m_target_OnClose(MyEntity obj)
         {
             Target = null;
-            
+
             if (m_barrel != null && AiEnabled)
             {
-                CheckNearTargets();
+                //CheckNearTargets();
             }
         }
 
@@ -2017,40 +2198,13 @@ namespace Sandbox.Game.Weapons
 
         #region Inventory
 
-        public MyInventory GetInventory(int i)
+        public void SetInventory(MyInventory inventory, int index)
         {
-            return m_ammoInventory;
-        }
-
-        int IMyInventoryOwner.InventoryCount
-        {
-            get { return 1; }
-        }
-
-        MyInventoryOwnerTypeEnum IMyInventoryOwner.InventoryOwnerType
-        {
-            get { return MyInventoryOwnerTypeEnum.System; }
-        }
-
-        String IMyInventoryOwner.DisplayNameText
-        {
-            get { return CustomName.ToString(); }
-        }
-
-        bool IMyInventoryOwner.UseConveyorSystem
-        {
-            get
-            {
-                throw new NotImplementedException();
-            }
-            set
-            {
-                throw new NotImplementedException();
-            }
+            Components.Add<MyInventoryBase>(inventory);
         }
 
         #endregion
-        
+
         #region Ammo
 
         public int GetAmmunitionAmount()
@@ -2063,7 +2217,7 @@ namespace Sandbox.Game.Weapons
             m_gunBase.ConsumeAmmo();
             //if (RemainingAmmo < AmmoPerShot)
             //{
-            //    m_ammoInventory.RemoveItemsOfType(1, m_currentAmmoMagazineId);
+            //    Inventory.RemoveItemsOfType(1, m_currentAmmoMagazineId);
             //    RemainingAmmo += AmmoInMagazine;
             //}
 
@@ -2094,33 +2248,32 @@ namespace Sandbox.Game.Weapons
 
                 MyTerminalControlFactory.AddControl(controlBtn);
             }
-            
+
             var shootingRange = new MyTerminalControlSlider<MyLargeTurretBase>("Range", MySpaceTexts.BlockPropertyTitle_LargeTurretRadius, MySpaceTexts.BlockPropertyTitle_LargeTurretRadius);
             shootingRange.Normalizer = (x, f) => x.NormalizeRange(f);
             shootingRange.Denormalizer = (x, f) => x.DenormalizeRange(f);
             shootingRange.DefaultValue = 800;
             shootingRange.Getter = (x) => x.ShootingRange;
-            shootingRange.Setter = (x, v) => x.SyncObject.SendChangeRangeRequest(v);
+            shootingRange.Setter = (x, v) => x.ShootingRange = v;
             shootingRange.Writer = (x, result) => result.AppendInt32((int)x.m_shootingRange).Append(" m");
             shootingRange.EnableActions();
             MyTerminalControlFactory.AddControl(shootingRange);
 
             var enableIdleMovement = new MyTerminalControlOnOffSwitch<MyLargeTurretBase>("EnableIdleMovement", MySpaceTexts.BlockPropertyTitle_LargeTurretEnableTurretIdleMovement);
             enableIdleMovement.Getter = (x) => x.EnableIdleRotation;
-            enableIdleMovement.Setter = (x, v) => x.SyncObject.SendIdleRotationChanged(v);
+            enableIdleMovement.Setter = (x, v) => x.EnableIdleRotation = v;
             enableIdleMovement.EnableToggleAction();
             enableIdleMovement.EnableOnOffActions();
             MyTerminalControlFactory.AddControl(enableIdleMovement);
 
-            var separator= new MyTerminalControlSeparator<MyLargeTurretBase>();
+            var separator = new MyTerminalControlSeparator<MyLargeTurretBase>();
             MyTerminalControlFactory.AddControl(separator);
 
             var targetMeteors = new MyTerminalControlOnOffSwitch<MyLargeTurretBase>("TargetMeteors", MySpaceTexts.BlockPropertyTitle_LargeTurretTargetMeteors);
             targetMeteors.Getter = (x) => x.TargetMeteors;
-            targetMeteors.Setter = (x, v) => 
+            targetMeteors.Setter = (x, v) =>
             {
                 x.TargetMeteors = v;
-                x.SyncObject.SendChangeTargetingRequest(x.TargetFlags);
             };
             targetMeteors.EnableToggleAction(MyTerminalActionIcons.METEOR_TOGGLE);
             targetMeteors.EnableOnOffActions(MyTerminalActionIcons.METEOR_ON, MyTerminalActionIcons.METEOR_OFF);
@@ -2128,10 +2281,9 @@ namespace Sandbox.Game.Weapons
 
             var targetMoving = new MyTerminalControlOnOffSwitch<MyLargeTurretBase>("TargetMoving", MySpaceTexts.BlockPropertyTitle_LargeTurretTargetMoving);
             targetMoving.Getter = (x) => x.TargetMoving;
-            targetMoving.Setter = (x, v) => 
+            targetMoving.Setter = (x, v) =>
             {
                 x.TargetMoving = v;
-                x.SyncObject.SendChangeTargetingRequest(x.TargetFlags);
             };
             targetMoving.EnableToggleAction(MyTerminalActionIcons.MOVING_OBJECT_TOGGLE);
             targetMoving.EnableOnOffActions(MyTerminalActionIcons.MOVING_OBJECT_ON, MyTerminalActionIcons.MOVING_OBJECT_OFF);
@@ -2141,8 +2293,7 @@ namespace Sandbox.Game.Weapons
             targetMissiles.Getter = (x) => x.TargetMissiles;
             targetMissiles.Setter = (x, v) =>
             {
-                x.TargetMissiles = v;
-                x.SyncObject.SendChangeTargetingRequest(x.TargetFlags);
+                x.TargetMissiles = v;        
             };
             targetMissiles.EnableToggleAction(MyTerminalActionIcons.MISSILE_TOGGLE);
             targetMissiles.EnableOnOffActions(MyTerminalActionIcons.MISSILE_ON, MyTerminalActionIcons.MISSILE_OFF);
@@ -2153,7 +2304,6 @@ namespace Sandbox.Game.Weapons
             targetSmallGrids.Setter = (x, v) =>
             {
                 x.TargetSmallGrids = v;
-                x.SyncObject.SendChangeTargetingRequest(x.TargetFlags);
             };
             targetSmallGrids.EnableToggleAction(MyTerminalActionIcons.SMALLSHIP_TOGGLE);
             targetSmallGrids.EnableOnOffActions(MyTerminalActionIcons.SMALLSHIP_ON, MyTerminalActionIcons.SMALLSHIP_OFF);
@@ -2164,7 +2314,6 @@ namespace Sandbox.Game.Weapons
             targetLargeGrids.Setter = (x, v) =>
             {
                 x.TargetLargeGrids = v;
-                x.SyncObject.SendChangeTargetingRequest(x.TargetFlags);
             };
             targetLargeGrids.EnableToggleAction(MyTerminalActionIcons.LARGESHIP_TOGGLE);
             targetLargeGrids.EnableOnOffActions(MyTerminalActionIcons.LARGESHIP_ON, MyTerminalActionIcons.LARGESHIP_OFF);
@@ -2175,7 +2324,6 @@ namespace Sandbox.Game.Weapons
             targetCharacters.Setter = (x, v) =>
             {
                 x.TargetCharacters = v;
-                x.SyncObject.SendChangeTargetingRequest(x.TargetFlags);
             };
             targetCharacters.EnableToggleAction(MyTerminalActionIcons.CHARACTER_TOGGLE);
             targetCharacters.EnableOnOffActions(MyTerminalActionIcons.CHARACTER_ON, MyTerminalActionIcons.CHARACTER_OFF);
@@ -2186,12 +2334,21 @@ namespace Sandbox.Game.Weapons
             targetStations.Setter = (x, v) =>
             {
                 x.TargetStations = v;
-                x.SyncObject.SendChangeTargetingRequest(x.TargetFlags);
             };
             targetStations.EnableToggleAction(MyTerminalActionIcons.STATION_TOGGLE);
             targetStations.EnableOnOffActions(MyTerminalActionIcons.STATION_ON, MyTerminalActionIcons.STATION_OFF);
             MyTerminalControlFactory.AddControl(targetStations);
-            
+
+            var targetNeutrals = new MyTerminalControlOnOffSwitch<MyLargeTurretBase>("TargetNeutrals", MySpaceTexts.BlockPropertyTitle_LargeTurretTargetNeutrals);
+            targetNeutrals.Getter = (x) => x.TargetNeutrals;
+            targetNeutrals.Setter = (x, v) =>
+            {
+                x.TargetNeutrals = v;
+            };
+            targetNeutrals.EnableToggleAction(MyTerminalActionIcons.NEUTRALS_TOGGLE);
+            targetNeutrals.EnableOnOffActions(MyTerminalActionIcons.NEUTRALS_ON, MyTerminalActionIcons.NEUTRALS_OFF);
+            MyTerminalControlFactory.AddControl(targetNeutrals);
+
         }
 
         public float ShootingRange
@@ -2199,15 +2356,7 @@ namespace Sandbox.Game.Weapons
             get { return m_shootingRange; }
             set
             {
-                if (value != m_shootingRange)
-                {
-                    m_shootingRange = value;
-                    RaisePropertiesChanged();
-                    if (IsWorking && AiEnabled)
-                    {
-                        CheckNearTargets();
-                    }
-                }
+                m_shootingRange.Value = value;
             }
         }
 
@@ -2315,7 +2464,21 @@ namespace Sandbox.Game.Weapons
                     TargetFlags &= ~MyTurretTargetFlags.Stations;
             }
         }
-      
+
+        public bool TargetNeutrals
+        {
+            get
+            {
+                return (TargetFlags & MyTurretTargetFlags.NotNeutrals) == 0;
+            }
+            set
+            {
+                if (value)
+                    TargetFlags &= ~MyTurretTargetFlags.NotNeutrals;
+                else
+                    TargetFlags |= MyTurretTargetFlags.NotNeutrals;
+            }
+        }
         #endregion
 
         #region Player control
@@ -2335,8 +2498,8 @@ namespace Sandbox.Game.Weapons
             //Cannot transfer control from remote control or other turrets (for now at least)
             //This is needed to prevent strange circular references that may appear
             //Also, there needs to be a valid connection
-            //This is called on client only, so MySession.ControlledEntity is valid
-            var cockpit = MySession.ControlledEntity as MyCockpit;
+            //This is called on client only, so MySession.Static.ControlledEntity is valid
+            var cockpit = MySession.Static.ControlledEntity as MyCockpit;
             if (cockpit != null)
             {
                 if (cockpit is MyCryoChamber)
@@ -2344,13 +2507,13 @@ namespace Sandbox.Game.Weapons
                     return false;
                 }
 
-                return MyAntennaSystem.CheckConnection(cockpit.CubeGrid, CubeGrid, cockpit.ControllerInfo.Controller.Player);
+                return MyAntennaSystem.Static.CheckConnection(cockpit.CubeGrid, CubeGrid, cockpit.ControllerInfo.Controller.Player);
             }
 
-            var character = MySession.ControlledEntity as MyCharacter;
+            var character = MySession.Static.ControlledEntity as MyCharacter;
             if (character != null)
             {
-                return MyAntennaSystem.CheckConnection(character, CubeGrid, character.ControllerInfo.Controller.Player);
+                return MyAntennaSystem.Static.CheckConnection(character, CubeGrid, character.ControllerInfo.Controller.Player);
             }
 
             return false;
@@ -2376,14 +2539,16 @@ namespace Sandbox.Game.Weapons
             {
                 return;
             }
-            
+            if (!CanControl())
+                return;
+
             if (MyGuiScreenTerminal.IsOpen)
             {
                 MyGuiScreenTerminal.Hide();
             }
             MyCubeBuilder.Static.Deactivate();
 
-            SyncObject.RequestUse(UseActionEnum.Manipulate, MySession.ControlledEntity);
+            MyMultiplayer.RaiseEvent(this,x => x.RequestUseMessage, UseActionEnum.Manipulate,MySession.Static.ControlledEntity.Entity.EntityId);
         }
 
         private void AcquireControl(IMyControllableEntity previousControlledEntity)
@@ -2394,7 +2559,7 @@ namespace Sandbox.Game.Weapons
             SetCameraOverlay();
             if (IsControlledByLocalPlayer)
             {
-                MySession.SetCameraController(MyCameraControllerEnum.Entity, this);
+                MySession.Static.SetCameraController(MyCameraControllerEnum.Entity, this);
             }
 
             var character = PreviousControlledEntity as MyCharacter;
@@ -2421,6 +2586,9 @@ namespace Sandbox.Game.Weapons
                 {
                     MyHudCameraOverlay.Enabled = false;
                 }
+
+                // MyGuiScreenHudSpace.Static instance is created only after deserialing
+                m_hidetoolbar = true;
             }
         }
 
@@ -2431,6 +2599,12 @@ namespace Sandbox.Game.Weapons
 
         private void ReleaseControl(bool previousClosed = false)
         {
+            if (IsControlledByLocalPlayer)
+            {
+                MyGuiScreenHudSpace.Static.SetToolbarVisible(true);
+                m_hidetoolbar = false;
+            }
+
             if (IsPlayerControlled)
             {
                 //On clients that are disconnecting, don't send this
@@ -2442,7 +2616,7 @@ namespace Sandbox.Game.Weapons
                 if (PreviousControlledEntity is MyCockpit)
                 {
                     var cockpit = m_previousControlledEntity as MyCockpit;
-                    if (previousClosed)
+                    if (previousClosed||cockpit.Pilot==null || cockpit.MarkedForClose || cockpit.Closed)
                     {
                         //This is null when loading from file
                         ReturnControl(m_cockpitPilot);
@@ -2465,7 +2639,7 @@ namespace Sandbox.Game.Weapons
         {
             if (IsControlled)
             {
-                if (controller.Player == MySession.LocalHumanPlayer)
+                if (controller.Player == MySession.Static.LocalHumanPlayer)
                 {
                     MyHudCameraOverlay.Enabled = false;
                     var receiver = GetFirstRadioReceiver();
@@ -2477,6 +2651,7 @@ namespace Sandbox.Game.Weapons
             }
         }
 
+        [Event,Reliable,Broadcast,Server]
         void sync_ControlledEntity_Used()
         {
             ReleaseControl(false);
@@ -2487,7 +2662,7 @@ namespace Sandbox.Game.Weapons
             if (user != null && user.ControllerInfo.IsLocallyHumanControlled())
             {
                 if (actionResult == UseActionResult.UsedBySomeoneElse)
-                    MyHud.Notifications.Add(new MyHudNotification(MySpaceTexts.AlreadyUsedBySomebodyElse, 2500, MyFontEnum.Red));
+                    MyHud.Notifications.Add(new MyHudNotification(MyCommonTexts.AlreadyUsedBySomebodyElse, 2500, MyFontEnum.Red));
                 else
                     MyHud.Notifications.Add(MyNotificationSingletons.AccessDenied);
             }
@@ -2500,8 +2675,12 @@ namespace Sandbox.Game.Weapons
 
         private void OnStopAI()
         {
+            if (m_soundEmitter == null)
+                return;
             if (m_soundEmitter.IsPlaying)
                 m_soundEmitter.StopSound(true);
+            if (m_soundEmitterForRotation.IsPlaying)
+                m_soundEmitterForRotation.StopSound(true);
         }
 
         public void UpdateRotationAndElevation(float newRotation, float newElevation)
@@ -2516,7 +2695,7 @@ namespace Sandbox.Game.Weapons
         {
             //Check if it was already switched by server
             if (ControllerInfo.Controller != null)
-            {   
+            {
                 this.SwitchControl(nextControllableEntity);
             }
             PreviousControlledEntity = null;
@@ -2560,7 +2739,7 @@ namespace Sandbox.Game.Weapons
                 var character = PreviousControlledEntity as MyCharacter;
                 if (character != null)
                 {
-                    return MyAntennaSystem.CheckConnection(character, CubeGrid, ControllerInfo.Controller.Player);
+                    return MyAntennaSystem.Static.CheckConnection(character, CubeGrid, ControllerInfo.Controller.Player);
                 }
                 else
                 {
@@ -2570,7 +2749,7 @@ namespace Sandbox.Game.Weapons
 
             MyCubeGrid playerGrid = terminal.SlimBlock.CubeGrid;
 
-            return MyAntennaSystem.CheckConnection(playerGrid, CubeGrid, ControllerInfo.Controller.Player);
+            return MyAntennaSystem.Static.CheckConnection(playerGrid, CubeGrid, ControllerInfo.Controller.Player);
         }
 
         private MyDataReceiver GetFirstRadioReceiver()
@@ -2618,7 +2797,7 @@ namespace Sandbox.Game.Weapons
                 {
                     if (!HasPlayerAccess(ControllerInfo.Controller.Player.Identity.IdentityId))
                     {
-                        SyncObject.ControlledEntity_Use();
+                        MyMultiplayer.RaiseEvent(this, x => x.sync_ControlledEntity_Used);
                     }
                 }
             }
@@ -2703,18 +2882,18 @@ namespace Sandbox.Game.Weapons
 
         bool Sandbox.ModAPI.Interfaces.IMyCameraController.HandleUse()
         {
-            if (MySession.LocalCharacter != null)
+            if (MySession.Static.LocalCharacter != null)
             {
-                MySession.SetCameraController(MyCameraControllerEnum.Entity, MySession.LocalCharacter as MyEntity);
+                MySession.Static.SetCameraController(MyCameraControllerEnum.Entity, MySession.Static.LocalCharacter as MyEntity);
             }
             return false;
 
         }
 
-        bool Sandbox.ModAPI.Interfaces.IMyCameraController.IsInFirstPersonView 
-        { 
-            get { return true; } 
-            set { } 
+        bool Sandbox.ModAPI.Interfaces.IMyCameraController.IsInFirstPersonView
+        {
+            get { return true; }
+            set { }
         }
         bool Sandbox.ModAPI.Interfaces.IMyCameraController.ForceFirstPersonCamera { get; set; }
 
@@ -2730,14 +2909,14 @@ namespace Sandbox.Game.Weapons
 
         #region IMyControllableEntity implementation
         private MyControllerInfo m_controllerInfo = new MyControllerInfo();
-        public MyControllerInfo ControllerInfo 
+        public MyControllerInfo ControllerInfo
         {
             get
             {
                 return m_controllerInfo;
             }
         }
-        
+
         MyEntity IMyControllableEntity.Entity
         {
             get
@@ -2768,12 +2947,12 @@ namespace Sandbox.Game.Weapons
                 if (m_barrel == null || SyncObject == null)
                 {
                     //Mods may call this function incorrectly.
-                    System.Diagnostics.Debug.Fail("Turret rotated when it was not initialized or functional!");                  
+                    System.Diagnostics.Debug.Fail("Turret rotated when it was not initialized or functional!");
                     return;
                 }
 
-                m_rotationInterval_ms = (int)Math.Min(MyEngineConstants.UPDATE_STEP_SIZE_IN_SECONDS*1000,MySandboxGame.TotalGamePlayTimeInMilliseconds - m_rotationInterval_ms);
-                m_elevationInterval_ms = (int)Math.Min(MyEngineConstants.UPDATE_STEP_SIZE_IN_SECONDS * 1000, MySandboxGame.TotalGamePlayTimeInMilliseconds - m_elevationInterval_ms);
+                m_rotationInterval_ms = (int)Math.Min(VRage.Game.MyEngineConstants.UPDATE_STEP_SIZE_IN_SECONDS * 1000, MySandboxGame.TotalGamePlayTimeInMilliseconds - m_rotationInterval_ms);
+                m_elevationInterval_ms = (int)Math.Min(VRage.Game.MyEngineConstants.UPDATE_STEP_SIZE_IN_SECONDS * 1000, MySandboxGame.TotalGamePlayTimeInMilliseconds - m_elevationInterval_ms);
 
                 float slowDownCoeficient = m_rotationSpeed * 1000;
 
@@ -2790,7 +2969,7 @@ namespace Sandbox.Game.Weapons
 
                 RotateModels();
 
-                SyncObject.SendRotationAndElevation(m_rotation, m_elevation);
+                m_rotationAndElevationSync.Value = new SyncRotationAndElevation(){Rotation = m_rotation,Elevation = m_elevation};
 
                 m_rotationInterval_ms = MySandboxGame.TotalGamePlayTimeInMilliseconds;
                 m_elevationInterval_ms = MySandboxGame.TotalGamePlayTimeInMilliseconds;
@@ -2810,21 +2989,21 @@ namespace Sandbox.Game.Weapons
         /// </summary>
         public void BeginShoot(MyShootActionEnum action)
         {
-            //UpdateShooting(true);
-            //Direction doesn't matter because it is determined by the barrel when shooting anyway
-            SyncObject.BeginShoot(Vector3.Zero, MyShootActionEnum.PrimaryAction);
+            MyMultiplayer.RaiseEvent(this, x => x.OnBeginShoot, action);
         }
         /// <summary>
         /// This will be called locally to start shooting with the given action
         /// </summary>
         public void EndShoot(MyShootActionEnum action)
         {
-            SyncObject.EndShoot(MyShootActionEnum.PrimaryAction);
+            MyMultiplayer.RaiseEvent(this, x => x.OnEndShoot, action);
         }
 
         /// <summary>
         /// This will be called back from the sync object both on local and remote clients
         /// </summary>
+        /// 
+        [Event,Reliable,Server,Broadcast]
         public void OnBeginShoot(MyShootActionEnum action)
         {
             m_isPlayerShooting = true;
@@ -2832,15 +3011,18 @@ namespace Sandbox.Game.Weapons
         /// <summary>
         /// This will be called back from the sync object both on local and remote clients
         /// </summary>
+        /// 
+        [Event, Reliable, Server, Broadcast]
         public void OnEndShoot(MyShootActionEnum action)
         {
             UpdateShooting(false);
             m_isPlayerShooting = false;
         }
+
         public void Use()
         {
             MyGuiAudio.PlaySound(MyGuiSounds.HudUse);
-            SyncObject.ControlledEntity_Use();
+            MyMultiplayer.RaiseEvent(this, x => x.sync_ControlledEntity_Used);
         }
         public void UseContinues()
         {
@@ -2850,7 +3032,7 @@ namespace Sandbox.Game.Weapons
         {
 
         }
-        public void Sprint()
+        public void Sprint(bool enabled)
         {
 
         }
@@ -2892,7 +3074,7 @@ namespace Sandbox.Game.Weapons
 
         public void ShowTerminal()
         {
-            MyGuiScreenTerminal.Show(MyTerminalPageEnum.ControlPanel, MySession.LocalCharacter, this);
+            MyGuiScreenTerminal.Show(MyTerminalPageEnum.ControlPanel, MySession.Static.LocalCharacter, this);
         }
 
         public void SwitchThrusts()
@@ -2952,9 +3134,9 @@ namespace Sandbox.Game.Weapons
 
         }
 
-		public void SwitchToWeapon(MyToolbarItemWeapon weapon)
-		{
-		}
+        public void SwitchToWeapon(MyToolbarItemWeapon weapon)
+        {
+        }
 
         public bool CanSwitchToWeapon(MyDefinitionId? weaponDefinition)
         {
@@ -2963,7 +3145,7 @@ namespace Sandbox.Game.Weapons
 
         public void DrawHud(Sandbox.ModAPI.Interfaces.IMyCameraController camera, long playerId)
         {
-
+            MyGuiScreenHudSpace.Static.SetToolbarVisible(!m_hidetoolbar);
         }
 
         public void SwitchReactors()
@@ -2981,7 +3163,7 @@ namespace Sandbox.Game.Weapons
 
         }
 
-        public MyToolbarType ToolbarType 
+        public MyToolbarType ToolbarType
         {
             get
             {
@@ -2997,7 +3179,7 @@ namespace Sandbox.Game.Weapons
 
         protected void DrawLasers()
         {
-            if (!MySandboxGame.IsDedicated && m_barrel != null)
+            if (!MySandboxGame.IsDedicated && m_barrel != null && MyFakes.ENABLE_TURRET_LASERS)
             {
                 MyGunStatusEnum gunStatus = MyGunStatusEnum.Cooldown;
                 if (IsWorking)
@@ -3042,9 +3224,9 @@ namespace Sandbox.Game.Weapons
                     }
                     else
                     {
-                      
-                            var head = m_gunBase.GetMuzzleWorldMatrix();
-                            m_hitPosition = head.Translation + head.Forward * m_laserLength;
+
+                        var head = m_gunBase.GetMuzzleWorldMatrix();
+                        m_hitPosition = head.Translation + head.Forward * m_laserLength;
 
                         lineStart = m_barrel.Entity.PositionComp.GetPosition();
                         lineEnd = m_hitPosition;
@@ -3062,31 +3244,6 @@ namespace Sandbox.Game.Weapons
         }
 
         #endregion
-
-
-
-        int ModAPI.Interfaces.IMyInventoryOwner.InventoryCount
-        {
-            get { return 1; }
-        }
-
-
-        ModAPI.Interfaces.IMyInventory ModAPI.Interfaces.IMyInventoryOwner.GetInventory(int index)
-        {
-            return m_ammoInventory;
-        }
-
-        bool ModAPI.Interfaces.IMyInventoryOwner.UseConveyorSystem
-        {
-            get
-            {
-                return (this as IMyInventoryOwner).UseConveyorSystem;
-            }
-            set
-            {
-                (this as IMyInventoryOwner).UseConveyorSystem = value;
-            }
-        }
 
         public void SwitchAmmoMagazine()
         {
@@ -3131,7 +3288,7 @@ namespace Sandbox.Game.Weapons
 
         MyInventory IMyGunBaseUser.AmmoInventory
         {
-            get { return m_ammoInventory; }
+            get { return this.GetInventory(); }
         }
 
         long IMyGunBaseUser.OwnerId
@@ -3161,13 +3318,13 @@ namespace Sandbox.Game.Weapons
                 return MathHelper.Clamp(m_minRangeMeter + value * (m_maxRangeMeter - m_minRangeMeter), m_minRangeMeter, m_maxRangeMeter);
         }
 
-        public override void TakeControlFromTerminal() 
+        public override void TakeControlFromTerminal()
         {
             EnableIdleRotation = false;
             m_checkOtherTargets = false;
             if (Sync.IsServer)
             {
-                SyncObject.SendRotationAndElevation(m_rotation, m_elevation);
+                m_rotationAndElevationSync.Value = new SyncRotationAndElevation(){Rotation = m_rotation,Elevation = m_elevation};
             }
         }
 
@@ -3178,7 +3335,7 @@ namespace Sandbox.Game.Weapons
             m_checkOtherTargets = false;
         }
 
-        public void TargetPosition(Vector3D pos, Vector3 velocity,bool usePrediction)
+        public void TargetPosition(Vector3D pos, Vector3 velocity, bool usePrediction)
         {
             m_checkOtherTargets = false;
             Target = null;
@@ -3203,6 +3360,7 @@ namespace Sandbox.Game.Weapons
             EnableIdleRotation = enable;
         }
 
+        [Event,Reliable,Server,Broadcast]
         public void ResetTargetParams()
         {
             this.Target = null;
@@ -3254,17 +3412,112 @@ namespace Sandbox.Game.Weapons
 
         public override void SyncRotationAndOrientation()
         {
-            SyncObject.SendRotationAndElevation(m_rotation, m_elevation);
+             m_rotationAndElevationSync.Value = new SyncRotationAndElevation(){Rotation = m_rotation,Elevation = m_elevation};
         }
 
-        protected override void RememberIdle() 
+        protected override void RememberIdle()
         {
             m_previousIdleRotationState = EnableIdleRotation;
         }
 
-        protected override void RestoreIdle() 
+        protected override void RestoreIdle()
         {
             EnableIdleRotation = m_previousIdleRotationState;
+        }
+
+        [Event, Reliable, Server]
+        void RequestUseMessage(UseActionEnum useAction, long usedById)
+        {
+            MyEntity controlledEntity;
+            bool entityExists = MyEntities.TryGetEntityById<MyEntity>(usedById, out controlledEntity);
+            IMyControllableEntity controllableEntity = controlledEntity as IMyControllableEntity;
+            Debug.Assert(controllableEntity != null, "Controllable entity needs to get control from another controllable entity");
+            Debug.Assert(entityExists);
+
+            UseActionResult useResult = UseActionResult.OK;
+
+            if (entityExists && (useResult = (this as IMyUsableEntity).CanUse(useAction, controllableEntity)) == UseActionResult.OK)
+            {
+                MyMultiplayer.RaiseEvent(this, x => x.UseSuccessCallback, useAction, usedById, useResult);
+                UseSuccessCallback(useAction, usedById, useResult);
+            }
+            else
+            {
+                MyMultiplayer.RaiseEvent(this, x => x.UseFailureCallback, useAction, usedById, useResult, MyEventContext.Current.Sender);
+            }
+        }
+
+        [Event, Reliable, Broadcast]
+        void UseSuccessCallback(UseActionEnum useAction, long usedById,UseActionResult useResult)
+        {
+            MyEntity controlledEntity;
+            if (MyEntities.TryGetEntityById<MyEntity>(usedById, out controlledEntity))
+            {
+                var controllableEntity = controlledEntity as IMyControllableEntity;
+                Debug.Assert(controllableEntity != null, "Controllable entity needs to get control from another controllable entity");
+
+                if (controllableEntity != null)
+                {
+                    VRage.Game.MyRelationsBetweenPlayerAndBlock relation = VRage.Game.MyRelationsBetweenPlayerAndBlock.NoOwnership;
+                    var cubeBlock = this as MyCubeBlock;
+                    if (cubeBlock != null && controllableEntity.ControllerInfo.Controller != null)
+                    {
+                        relation = cubeBlock.GetUserRelationToOwner(controllableEntity.ControllerInfo.Controller.Player.Identity.IdentityId);
+                    }
+
+                    if (relation.IsFriendly())
+                    {
+                        sync_UseSuccess(useAction, controllableEntity);
+                    }
+                    else
+                    {
+                        sync_UseFailed(useAction, useResult, controllableEntity);
+                    }
+                }
+            }
+        }
+
+        [Event, Reliable, Client]
+        void UseFailureCallback(UseActionEnum useAction, long usedById, UseActionResult useResult)
+        {
+            MyEntity controlledEntity;
+            bool userFound = MyEntities.TryGetEntityById<MyEntity>(usedById, out controlledEntity);
+            Debug.Assert(userFound);
+            IMyControllableEntity controllableEntity = controlledEntity as IMyControllableEntity;
+            Debug.Assert(controllableEntity != null, "Controllable entity needs to get control from another controllable entity");
+            sync_UseFailed(useAction, useResult, controllableEntity);
+        }
+
+        int IMyInventoryOwner.InventoryCount
+        {
+            get { return InventoryCount; }
+        }
+
+        IMyInventory IMyInventoryOwner.GetInventory(int index)
+        {
+            return this.GetInventory(index);
+        }
+
+        long IMyInventoryOwner.EntityId
+        {
+            get { return EntityId; }
+        }
+
+        bool IMyInventoryOwner.UseConveyorSystem
+        {
+            get
+            {
+                throw new NotImplementedException();
+            }
+            set
+            {
+                throw new NotImplementedException();
+            }
+        }
+
+        bool IMyInventoryOwner.HasInventory
+        {
+            get { return HasInventory; }
         }
     }
 

@@ -1,10 +1,11 @@
 ﻿using SharpDX.Direct3D11;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
+using System.Globalization;
 using System.Linq;
 using System.Text;
 using VRage.Voxels;
-
 using VRageMath;
 using VRageRender.Resources;
 
@@ -18,6 +19,7 @@ namespace VRageRender
         internal const int OBJECT_SLOT = 2;
         internal const int MATERIAL_SLOT = 3;
         internal const int FOLIAGE_SLOT = 4;
+        internal const int ALPHAMASK_VIEWS_SLOT = 5;
 
         // srvs
             // geometry
@@ -43,17 +45,15 @@ namespace VRageRender
         // samplers
         internal const int SHADOW_SAMPLER_SLOT = 15;
 
-
         internal static ConstantsBufferId FrameConstants { get; set; }
         internal static ConstantsBufferId ProjectionConstants { get; set; }
         internal static ConstantsBufferId ObjectConstants { get; set; }
         internal static ConstantsBufferId FoliageConstants { get; set; }
         internal static ConstantsBufferId MaterialFoliageTableConstants { get; set; }
         internal static ConstantsBufferId OutlineConstants { get; set; }
+        internal static ConstantsBufferId AlphamaskViewsConstants { get; set; }
 
         internal static UInt64 FrameCounter = 0;
-
-        internal static MyRenderContext RC { get { return MyRenderContextPool.Immediate; } }
 
         internal unsafe static void Init()
         {
@@ -63,6 +63,9 @@ namespace VRageRender
             FoliageConstants = MyHwBuffers.CreateConstantsBuffer(sizeof(Matrix));
             MaterialFoliageTableConstants = MyHwBuffers.CreateConstantsBuffer(sizeof(Vector4) * 256);
             OutlineConstants = MyHwBuffers.CreateConstantsBuffer(sizeof(OutlineConstantsLayout));
+            AlphamaskViewsConstants = MyHwBuffers.CreateConstantsBuffer(sizeof(Matrix) * 181);
+
+            UpdateAlphamaskViewsConstants();
         }
 
         internal static ShaderResourceView GetAmbientBrdfLut()
@@ -108,44 +111,67 @@ namespace VRageRender
              internal Matrix InvViewProjection;
              internal Matrix ViewProjectionWorld;
              internal Vector4 WorldOffset;
+
              internal Vector2 Resolution;
              internal float Time;
              internal float TimeDelta;
+
              internal Vector4 TerrainTextureDistances;
+
              internal Vector2 TerrainDetailRange;
              internal uint TilesNum;
              internal uint TilesX;
+
              internal Vector4 FoliageClippingScaling;
              internal Vector3 WindVector;
              internal float Tau;
+
              internal float BacklightMult;
              internal float EnvMult;
              internal float Contrast;
              internal float Brightness;
+
              internal float MiddleGrey;
              internal float LuminanceExposure;
              internal float BloomExposure;
              internal float BloomMult;
+
              internal float MiddleGreyCurveSharpness;
              internal float MiddleGreyAt0;
              internal float BlueShiftRapidness;
              internal float BlueShiftScale;
+
              internal float FogDensity;
              internal float FogMult;
              internal float FogYOffset;
              internal uint FogColor;
+
              internal Vector3 DirectionalLightDir;
              internal float SkyboxBlend;
+
              internal Vector3 DirectionalLightColor;
              internal float ForwardPassAmbient;
+
+             internal Vector3 AdditionalSunColor;
+             internal float AdditionalSunIntensity;
+
+             internal Vector4 SecondarySunDirection1;
+             internal Vector4 SecondarySunDirection2;
+             internal Vector4 SecondarySunDirection3;
+             internal Vector4 SecondarySunDirection4;
+             internal Vector4 SecondarySunDirection5;
+             internal int AdditionalSunCount;
+             internal Vector3 _Padding1;
+
              internal float Tonemapping_A;
              internal float Tonemapping_B;
              internal float Tonemapping_C;
              internal float Tonemapping_D;
+
              internal float Tonemapping_E;
              internal float Tonemapping_F;
              internal float LogLumThreshold;
-             internal float padding2_;
+             internal float DebugVoxelLod;
             
              internal Vector4 VoxelLodRange0;
              internal Vector4 VoxelLodRange1;
@@ -160,12 +186,26 @@ namespace VRageRender
              internal Vector4 VoxelMassiveLodRange5;
              internal Vector4 VoxelMassiveLodRange6;
              internal Vector4 VoxelMassiveLodRange7;
+
+             internal float SkyboxBrightness;
+			 internal float ShadowFadeout;
+             Vector2 _padding;
+
+             internal float EnableVoxelAo;
+             internal float VoxelAoMin;
+             internal float VoxelAoMax;
+             internal float VoxelAoOffset;
+
+             internal Matrix BackgroundOrientation;
          }
 
         internal static void MoveToNextFrame()
         {
             FrameCounter++;
         }
+
+        static int m_lastGameplayFrame;
+        static int m_lastFrameGameplayUpdate;
 
         internal static void UpdateFrameConstants()
         {
@@ -188,8 +228,17 @@ namespace VRageRender
             
             constants.TerrainDetailRange.X = 0;
             constants.TerrainDetailRange.Y = 0;
-            constants.Time = (float) ( MyRender11.CurrentDrawTime.Seconds - Math.Truncate(MyRender11.CurrentDrawTime.Seconds / 1000.0) * 1000 );
-            constants.TimeDelta = (float)(MyRender11.TimeDelta.Seconds);
+
+            var currentGameplayFrame = MyRender11.Settings.GameplayFrame;
+            constants.Time = (float) (currentGameplayFrame) / 60.0f;
+            constants.TimeDelta = (float)(currentGameplayFrame - m_lastGameplayFrame) / 60.0f;
+
+            if ((int)FrameCounter != m_lastFrameGameplayUpdate)
+            {
+                m_lastGameplayFrame = currentGameplayFrame;
+                m_lastFrameGameplayUpdate = (int)FrameCounter;
+            }
+
             constants.FoliageClippingScaling = new Vector4(
                 //MyRender.Settings.GrassGeometryClippingDistance,
                 MyRender11.RenderSettings.FoliageDetails.GrassDrawDistance(),
@@ -201,7 +250,7 @@ namespace VRageRender
                 0, 
                 (float)Math.Sin(MyRender11.Settings.WindAzimuth * Math.PI / 180.0)) * MyRender11.Settings.WindStrength;
 
-            constants.Tau = MyRender11.Postprocess.EyeAdaptationTau;
+            constants.Tau = MyRender11.Postprocess.EnableEyeAdaptation ? MyRender11.Postprocess.EyeAdaptationTau : 0;
             constants.BacklightMult = MyRender11.Settings.BacklightMult;
             constants.EnvMult = MyRender11.Settings.EnvMult;
             constants.Contrast = MyRender11.Postprocess.Contrast;
@@ -251,7 +300,44 @@ namespace VRageRender
 
             constants.DirectionalLightColor = MyEnvironment.DirectionalLightIntensity;
             constants.DirectionalLightDir = MyEnvironment.DirectionalLightDir;
+
+            int lightIndex = 0;
+            if (MyEnvironment.AdditionalSunDirections != null && MyEnvironment.AdditionalSunDirections.Length > 0)
+            {
+                constants.AdditionalSunColor = MyEnvironment.AdditionalSunColors[0];
+                constants.AdditionalSunIntensity = MyEnvironment.AdditionalSunIntensities[0];
+
+                if (lightIndex < MyEnvironment.AdditionalSunDirections.Length)
+                    constants.SecondarySunDirection1 = new Vector4(MathHelper.CalculateVectorOnSphere(MyEnvironment.DirectionalLightDir, MyEnvironment.AdditionalSunDirections[lightIndex][0], MyEnvironment.AdditionalSunDirections[lightIndex][1]), 0);
+                ++lightIndex;
+                if (lightIndex < MyEnvironment.AdditionalSunDirections.Length)
+                    constants.SecondarySunDirection2 = new Vector4(MathHelper.CalculateVectorOnSphere(MyEnvironment.DirectionalLightDir, MyEnvironment.AdditionalSunDirections[lightIndex][0], MyEnvironment.AdditionalSunDirections[lightIndex][1]), 0);
+                ++lightIndex;
+                if (lightIndex < MyEnvironment.AdditionalSunDirections.Length)
+                    constants.SecondarySunDirection3 = new Vector4(MathHelper.CalculateVectorOnSphere(MyEnvironment.DirectionalLightDir, MyEnvironment.AdditionalSunDirections[lightIndex][0], MyEnvironment.AdditionalSunDirections[lightIndex][1]), 0);
+                ++lightIndex;
+                if (lightIndex < MyEnvironment.AdditionalSunDirections.Length)
+                    constants.SecondarySunDirection4 = new Vector4(MathHelper.CalculateVectorOnSphere(MyEnvironment.DirectionalLightDir, MyEnvironment.AdditionalSunDirections[lightIndex][0], MyEnvironment.AdditionalSunDirections[lightIndex][1]), 0);
+                ++lightIndex;
+                if (lightIndex < MyEnvironment.AdditionalSunDirections.Length)
+                    constants.SecondarySunDirection5 = new Vector4(MathHelper.CalculateVectorOnSphere(MyEnvironment.DirectionalLightDir, MyEnvironment.AdditionalSunDirections[lightIndex][0], MyEnvironment.AdditionalSunDirections[lightIndex][1]), 0);
+                ++lightIndex;
+                constants.AdditionalSunCount = MyEnvironment.AdditionalSunDirections.Length;
+            }
+            else
+                constants.AdditionalSunCount = 0;
+
             constants.SkyboxBlend = 1 - 2 * (float)(Math.Abs(-MyEnvironment.DayTime + 0.5));
+            constants.SkyboxBrightness = MathHelper.Lerp(1.0f, 0.01f, MyEnvironment.PlanetFactor);
+			constants.ShadowFadeout = MyRender11.Settings.ShadowFadeoutMultiplier;
+
+            constants.DebugVoxelLod = MyRenderSettings.DebugClipmapLodColor ? 1.0f : 0.0f;
+            constants.EnableVoxelAo = MyRenderSettings.EnableVoxelAo ? 1f : 0f;
+            constants.VoxelAoMin = MyRenderSettings.VoxelAoMin;
+            constants.VoxelAoMax = MyRenderSettings.VoxelAoMax;
+            constants.VoxelAoOffset = MyRenderSettings.VoxelAoOffset;
+
+            constants.BackgroundOrientation = Matrix.CreateFromQuaternion(MyEnvironment.BackgroundOrientation);
 
             MyClipmap.ComputeLodViewBounds(MyClipmapScaleEnum.Normal, 0, out constants.VoxelLodRange0.X, out constants.VoxelLodRange0.Y);
             MyClipmap.ComputeLodViewBounds(MyClipmapScaleEnum.Normal, 1, out constants.VoxelLodRange0.Z, out constants.VoxelLodRange0.W);
@@ -286,7 +372,224 @@ namespace VRageRender
             
 
             var mapping = MyMapping.MapDiscard(MyCommon.FrameConstants);
-            mapping.stream.Write(constants);
+            mapping.WriteAndPosition(ref constants);
+            mapping.Unmap();
+        }
+
+
+        static string[] s_viewVectorData = new string[]
+        {
+    "-0.707107,-0.707107,0.000000,0.000000,-0.000000,1.000000,0.707107,-0.707107,-0.000000", 
+    "-0.613941,-0.789352,0.000000,0.000000,-0.000000,1.000000,0.789352,-0.613941,-0.000000",
+    "-0.707107,-0.707107,0.000000,0.105993,-0.105993,0.850104,0.601114,-0.601114,-0.149896",
+    "-0.789352,-0.613940,0.000000,0.000000,-0.000000,1.000000,0.613940,-0.789352,-0.000000",
+    "-0.485643,-0.874157,0.000000,0.000000,-0.000000,1.000000,0.874157,-0.485643,-0.000000",
+    "-0.600000,-0.800000,0.000000,0.119917,-0.089938,0.850104,0.680083,-0.510062,-0.149896",
+    "-0.707107,-0.707107,0.000000,0.188689,-0.188689,0.733154,0.518418,-0.518418,-0.266846",
+    "-0.800000,-0.600000,0.000000,0.089938,-0.119917,0.850104,0.510062,-0.680083,-0.149896",
+    "-0.874157,-0.485643,0.000000,0.000000,-0.000000,1.000000,0.485643,-0.874157,-0.000000",
+    "-0.316228,-0.948683,0.000000,0.000000,-0.000000,1.000000,0.948683,-0.316228,-0.000000",
+    "-0.447214,-0.894427,0.000000,0.134071,-0.067036,0.850104,0.760356,-0.380178,-0.149896",
+    "-0.581238,-0.813734,0.000000,0.217142,-0.155101,0.733154,0.596592,-0.426137,-0.266846",
+    "-0.707107,-0.707107,0.000000,0.258819,-0.258819,0.633975,0.448288,-0.448288,-0.366025",
+    "-0.813734,-0.581238,0.000000,0.155101,-0.217142,0.733154,0.426137,-0.596592,-0.266846",
+    "-0.894427,-0.447214,0.000000,0.067036,-0.134071,0.850104,0.380178,-0.760356,-0.149896",
+    "-0.948683,-0.316228,0.000000,0.000000,-0.000000,1.000000,0.316228,-0.948683,-0.000000",
+    "-0.110431,-0.993884,0.000000,0.000000,-0.000000,1.000000,0.993884,-0.110431,-0.000000",
+    "-0.242536,-0.970143,0.000000,0.145421,-0.036355,0.850104,0.824722,-0.206180,-0.149896",
+    "-0.393919,-0.919145,0.000000,0.245270,-0.105116,0.733154,0.673875,-0.288803,-0.266846",
+    "-0.554700,-0.832050,0.000000,0.304552,-0.203034,0.633975,0.527499,-0.351666,-0.366025",
+    "-0.707107,-0.707107,0.000000,0.322621,-0.322621,0.543744,0.384485,-0.384485,-0.456256",
+    "-0.832050,-0.554700,0.000000,0.203034,-0.304552,0.633975,0.351666,-0.527499,-0.366025",
+    "-0.919145,-0.393919,0.000000,0.105116,-0.245270,0.733154,0.288803,-0.673875,-0.266846",
+    "-0.970142,-0.242536,0.000000,0.036355,-0.145421,0.850104,0.206181,-0.824722,-0.149896",
+    "-0.993884,-0.110432,0.000000,0.000000,-0.000000,1.000000,0.110432,-0.993884,-0.000000",
+    "0.110431,-0.993884,0.000000,0.000000,0.000000,1.000000,0.993884,0.110431,-0.000000",
+    "-0.000000,-1.000000,0.000000,0.149896,-0.000000,0.850104,0.850104,-0.000000,-0.149896",
+    "-0.141422,-0.989949,0.000000,0.264164,-0.037738,0.733154,0.725785,-0.103684,-0.266846",
+    "-0.316228,-0.948683,0.000000,0.347242,-0.115747,0.633975,0.601441,-0.200480,-0.366025",
+    "-0.514496,-0.857493,0.000000,0.391236,-0.234742,0.543744,0.466257,-0.279754,-0.456256",
+    "-0.707107,-0.707107,0.000000,0.384485,-0.384485,0.456256,0.322621,-0.322621,-0.543744",
+    "-0.857493,-0.514496,0.000000,0.234742,-0.391236,0.543744,0.279754,-0.466257,-0.456256",
+    "-0.948683,-0.316228,0.000000,0.115747,-0.347242,0.633975,0.200480,-0.601441,-0.366025",
+    "-0.989950,-0.141421,0.000000,0.037738,-0.264164,0.733154,0.103684,-0.725785,-0.266846",
+    "-1.000000,0.000000,0.000000,-0.000000,-0.149896,0.850104,-0.000000,-0.850104,-0.149896",
+    "-0.993884,0.110431,0.000000,-0.000000,-0.000000,1.000000,-0.110431,-0.993884,-0.000000",
+    "0.316228,-0.948683,0.000000,0.000000,0.000000,1.000000,0.948683,0.316228,-0.000000",
+    "0.242536,-0.970143,0.000000,0.145421,0.036355,0.850104,0.824722,0.206180,-0.149896",
+    "0.141422,-0.989949,0.000000,0.264164,0.037738,0.733154,0.725785,0.103684,-0.266846",
+    "-0.000000,-1.000000,0.000000,0.366025,-0.000000,0.633975,0.633975,-0.000000,-0.366025",
+    "-0.196116,-0.980581,0.000000,0.447395,-0.089479,0.543744,0.533185,-0.106637,-0.456256",
+    "-0.447214,-0.894427,0.000000,0.486340,-0.243170,0.456256,0.408087,-0.204044,-0.543744",
+    "-0.707107,-0.707107,0.000000,0.448288,-0.448288,0.366025,0.258819,-0.258819,-0.633975",
+    "-0.894427,-0.447214,0.000000,0.243170,-0.486340,0.456256,0.204044,-0.408087,-0.543744",
+    "-0.980581,-0.196116,0.000000,0.089479,-0.447395,0.543744,0.106637,-0.533185,-0.456256",
+    "-1.000000,0.000000,0.000000,-0.000000,-0.366025,0.633975,-0.000000,-0.633975,-0.366025",
+    "-0.989950,0.141421,0.000000,-0.037738,-0.264164,0.733154,-0.103684,-0.725785,-0.266846",
+    "-0.970143,0.242536,0.000000,-0.036355,-0.145421,0.850104,-0.206180,-0.824722,-0.149896",
+    "-0.948683,0.316228,0.000000,-0.000000,-0.000000,1.000000,-0.316228,-0.948683,-0.000000",
+    "0.485643,-0.874157,0.000000,0.000000,0.000000,1.000000,0.874157,0.485643,-0.000000",
+    "0.447214,-0.894427,0.000000,0.134071,0.067036,0.850104,0.760356,0.380178,-0.149896",
+    "0.393919,-0.919145,0.000000,0.245270,0.105116,0.733154,0.673875,0.288803,-0.266846",
+    "0.316228,-0.948683,0.000000,0.347242,0.115747,0.633975,0.601441,0.200480,-0.366025",
+    "0.196116,-0.980581,0.000000,0.447395,0.089479,0.543744,0.533185,0.106637,-0.456256",
+    "-0.000000,-1.000000,0.000000,0.543744,-0.000000,0.456256,0.456256,-0.000000,-0.543744",
+    "-0.316228,-0.948683,0.000000,0.601441,-0.200480,0.366025,0.347242,-0.115747,-0.633975",
+    "-0.707107,-0.707107,0.000000,0.518418,-0.518418,0.266846,0.188689,-0.188689,-0.733154",
+    "-0.948683,-0.316228,0.000000,0.200480,-0.601441,0.366025,0.115747,-0.347242,-0.633975",
+    "-1.000000,0.000000,0.000000,-0.000000,-0.543744,0.456256,-0.000000,-0.456256,-0.543744",
+    "-0.980581,0.196116,0.000000,-0.089479,-0.447395,0.543744,-0.106637,-0.533185,-0.456256",
+    "-0.948683,0.316228,0.000000,-0.115747,-0.347242,0.633975,-0.200480,-0.601441,-0.366025",
+    "-0.919145,0.393919,0.000000,-0.105116,-0.245270,0.733154,-0.288803,-0.673875,-0.266846",
+    "-0.894427,0.447214,0.000000,-0.067036,-0.134071,0.850104,-0.380178,-0.760356,-0.149896",
+    "-0.874157,0.485643,0.000000,-0.000000,-0.000000,1.000000,-0.485643,-0.874157,-0.000000",
+    "0.613941,-0.789352,0.000000,0.000000,0.000000,1.000000,0.789352,0.613941,-0.000000",
+    "0.600000,-0.800000,0.000000,0.119917,0.089938,0.850104,0.680083,0.510062,-0.149896",
+    "0.581238,-0.813734,0.000000,0.217142,0.155101,0.733154,0.596592,0.426137,-0.266846",
+    "0.554700,-0.832050,0.000000,0.304552,0.203034,0.633975,0.527499,0.351666,-0.366025",
+    "0.514496,-0.857493,0.000000,0.391236,0.234742,0.543744,0.466257,0.279754,-0.456256",
+    "0.447214,-0.894427,0.000000,0.486340,0.243170,0.456256,0.408087,0.204044,-0.543744",
+    "0.316228,-0.948683,0.000000,0.601441,0.200480,0.366025,0.347242,0.115747,-0.633975",
+    "-0.000000,-1.000000,0.000000,0.733154,-0.000000,0.266846,0.266846,-0.000000,-0.733154",
+    "-0.707107,-0.707107,0.000000,0.601114,-0.601114,0.149896,0.105993,-0.105993,-0.850104",
+    "-1.000000,0.000000,0.000000,-0.000000,-0.733154,0.266846,-0.000000,-0.266846,-0.733154",
+    "-0.948683,0.316228,0.000000,-0.200480,-0.601441,0.366025,-0.115747,-0.347242,-0.633975",
+    "-0.894427,0.447214,0.000000,-0.243170,-0.486340,0.456256,-0.204044,-0.408087,-0.543744",
+    "-0.857493,0.514496,0.000000,-0.234742,-0.391236,0.543744,-0.279754,-0.466257,-0.456256",
+    "-0.832050,0.554700,0.000000,-0.203034,-0.304552,0.633975,-0.351666,-0.527499,-0.366025",
+    "-0.813733,0.581238,0.000000,-0.155101,-0.217142,0.733154,-0.426137,-0.596592,-0.266846",
+    "-0.800000,0.600000,0.000000,-0.089938,-0.119917,0.850104,-0.510062,-0.680083,-0.149896",
+    "-0.789352,0.613941,0.000000,-0.000000,-0.000000,1.000000,-0.613941,-0.789352,-0.000000",
+    "0.707107,-0.707107,0.000000,0.000000,0.000000,1.000000,0.707107,0.707107,-0.000000",
+    "0.707107,-0.707107,0.000000,0.105993,0.105993,0.850104,0.601114,0.601114,-0.149896",
+    "0.707107,-0.707107,0.000000,0.188689,0.188689,0.733154,0.518418,0.518418,-0.266846",
+    "0.707107,-0.707107,0.000000,0.258819,0.258819,0.633975,0.448288,0.448288,-0.366025",
+    "0.707107,-0.707107,0.000000,0.322621,0.322621,0.543744,0.384485,0.384485,-0.456256",
+    "0.707107,-0.707107,0.000000,0.384485,0.384485,0.456256,0.322621,0.322621,-0.543744",
+    "0.707107,-0.707107,0.000000,0.448288,0.448288,0.366025,0.258819,0.258819,-0.633975",
+    "0.707107,-0.707107,0.000000,0.518418,0.518418,0.266846,0.188689,0.188689,-0.733154",
+    "0.707107,-0.707107,0.000000,0.601114,0.601114,0.149896,0.105993,0.105993,-0.850104",
+    "0.000000,1.000000,0.000000,-1.000000,0.000000,0.000000,0.000000,0.000000,-1.000000",
+    "-0.707107,0.707107,0.000000,-0.601114,-0.601114,0.149896,-0.105993,-0.105993,-0.850104",
+    "-0.707107,0.707107,0.000000,-0.518418,-0.518418,0.266846,-0.188689,-0.188689,-0.733154",
+    "-0.707107,0.707107,0.000000,-0.448288,-0.448288,0.366025,-0.258819,-0.258819,-0.633975",
+    "-0.707107,0.707107,0.000000,-0.384485,-0.384485,0.456256,-0.322621,-0.322621,-0.543744",
+    "-0.707107,0.707107,0.000000,-0.322621,-0.322621,0.543744,-0.384485,-0.384485,-0.456256",
+    "-0.707107,0.707107,0.000000,-0.258819,-0.258819,0.633975,-0.448288,-0.448288,-0.366025",
+    "-0.707107,0.707107,0.000000,-0.188689,-0.188689,0.733154,-0.518418,-0.518418,-0.266846",
+    "-0.707107,0.707107,0.000000,-0.105993,-0.105993,0.850104,-0.601114,-0.601114,-0.149896",
+    "-0.707107,0.707107,0.000000,-0.000000,-0.000000,1.000000,-0.707107,-0.707107,-0.000000",
+    "0.789352,-0.613941,0.000000,0.000000,0.000000,1.000000,0.613941,0.789352,-0.000000",
+    "0.800000,-0.600000,0.000000,0.089938,0.119917,0.850104,0.510062,0.680083,-0.149896",
+    "0.813734,-0.581238,0.000000,0.155101,0.217142,0.733154,0.426137,0.596592,-0.266846",
+    "0.832050,-0.554700,0.000000,0.203034,0.304551,0.633975,0.351666,0.527499,-0.366025",
+    "0.857493,-0.514496,0.000000,0.234742,0.391236,0.543744,0.279754,0.466257,-0.456256",
+    "0.894427,-0.447214,0.000000,0.243170,0.486340,0.456256,0.204044,0.408087,-0.543744",
+    "0.948683,-0.316228,0.000000,0.200480,0.601441,0.366025,0.115747,0.347242,-0.633975",
+    "1.000000,0.000000,0.000000,0.000000,0.733154,0.266846,0.000000,0.266846,-0.733154",
+    "0.707107,0.707107,0.000000,-0.601114,0.601114,0.149896,-0.105993,0.105993,-0.850104",
+    "0.000000,1.000000,0.000000,-0.733154,0.000000,0.266846,-0.266846,0.000000,-0.733154",
+    "-0.316228,0.948683,0.000000,-0.601441,-0.200480,0.366025,-0.347242,-0.115747,-0.633975",
+    "-0.447214,0.894427,0.000000,-0.486340,-0.243170,0.456256,-0.408087,-0.204044,-0.543744",
+    "-0.514496,0.857493,0.000000,-0.391236,-0.234742,0.543744,-0.466257,-0.279754,-0.456256",
+    "-0.554700,0.832050,0.000000,-0.304552,-0.203034,0.633975,-0.527499,-0.351666,-0.366025",
+    "-0.581238,0.813734,0.000000,-0.217142,-0.155101,0.733154,-0.596592,-0.426137,-0.266846",
+    "-0.600000,0.800000,0.000000,-0.119917,-0.089938,0.850104,-0.680083,-0.510062,-0.149896",
+    "-0.613941,0.789352,0.000000,-0.000000,-0.000000,1.000000,-0.789352,-0.613941,-0.000000",
+    "0.874157,-0.485643,0.000000,0.000000,0.000000,1.000000,0.485643,0.874157,-0.000000",
+    "0.894427,-0.447214,0.000000,0.067036,0.134071,0.850104,0.380178,0.760356,-0.149896",
+    "0.919145,-0.393919,0.000000,0.105116,0.245270,0.733154,0.288803,0.673875,-0.266846",
+    "0.948683,-0.316228,0.000000,0.115747,0.347242,0.633975,0.200480,0.601441,-0.366025",
+    "0.980581,-0.196116,0.000000,0.089479,0.447395,0.543744,0.106637,0.533185,-0.456256",
+    "1.000000,0.000000,0.000000,0.000000,0.543744,0.456256,0.000000,0.456256,-0.543744",
+    "0.948683,0.316228,0.000000,-0.200480,0.601441,0.366025,-0.115747,0.347242,-0.633975",
+    "0.707107,0.707107,0.000000,-0.518418,0.518418,0.266846,-0.188689,0.188689,-0.733154",
+    "0.316228,0.948683,0.000000,-0.601441,0.200480,0.366025,-0.347242,0.115747,-0.633975",
+    "0.000000,1.000000,0.000000,-0.543744,0.000000,0.456256,-0.456256,0.000000,-0.543744",
+    "-0.196116,0.980581,0.000000,-0.447395,-0.089479,0.543744,-0.533185,-0.106637,-0.456256",
+    "-0.316228,0.948683,0.000000,-0.347242,-0.115747,0.633975,-0.601441,-0.200480,-0.366025",
+    "-0.393919,0.919145,0.000000,-0.245270,-0.105116,0.733154,-0.673875,-0.288803,-0.266846",
+    "-0.447214,0.894427,0.000000,-0.134071,-0.067036,0.850104,-0.760356,-0.380178,-0.149896",
+    "-0.485643,0.874157,0.000000,-0.000000,-0.000000,1.000000,-0.874157,-0.485643,-0.000000",
+    "0.948683,-0.316228,0.000000,0.000000,0.000000,1.000000,0.316228,0.948683,-0.000000",
+    "0.970142,-0.242536,0.000000,0.036355,0.145421,0.850104,0.206180,0.824722,-0.149896",
+    "0.989950,-0.141421,0.000000,0.037738,0.264164,0.733154,0.103684,0.725785,-0.266846",
+    "1.000000,0.000000,0.000000,0.000000,0.366025,0.633975,0.000000,0.633975,-0.366025",
+    "0.980581,0.196116,0.000000,-0.089479,0.447395,0.543744,-0.106637,0.533185,-0.456256",
+    "0.894427,0.447214,0.000000,-0.243170,0.486340,0.456256,-0.204044,0.408087,-0.543744",
+    "0.707107,0.707107,0.000000,-0.448288,0.448288,0.366025,-0.258819,0.258819,-0.633975",
+    "0.447214,0.894427,0.000000,-0.486340,0.243170,0.456256,-0.408087,0.204044,-0.543744",
+    "0.196116,0.980581,0.000000,-0.447395,0.089479,0.543744,-0.533185,0.106637,-0.456256",
+    "0.000000,1.000000,0.000000,-0.366025,0.000000,0.633975,-0.633975,0.000000,-0.366025",
+    "-0.141421,0.989949,0.000000,-0.264164,-0.037738,0.733154,-0.725785,-0.103684,-0.266846",
+    "-0.242536,0.970143,0.000000,-0.145421,-0.036355,0.850104,-0.824722,-0.206180,-0.149896",
+    "-0.316228,0.948683,0.000000,-0.000000,-0.000000,1.000000,-0.948683,-0.316228,-0.000000",
+    "0.993884,-0.110432,0.000000,0.000000,0.000000,1.000000,0.110432,0.993884,-0.000000",
+    "1.000000,0.000000,0.000000,0.000000,0.149896,0.850104,0.000000,0.850104,-0.149896",
+    "0.989949,0.141421,0.000000,-0.037738,0.264164,0.733154,-0.103684,0.725785,-0.266846",
+    "0.948683,0.316228,0.000000,-0.115747,0.347242,0.633975,-0.200480,0.601441,-0.366025",
+    "0.857493,0.514496,0.000000,-0.234742,0.391236,0.543744,-0.279754,0.466257,-0.456256",
+    "0.707107,0.707107,0.000000,-0.384485,0.384485,0.456256,-0.322621,0.322621,-0.543744",
+    "0.514496,0.857493,0.000000,-0.391236,0.234742,0.543744,-0.466257,0.279754,-0.456256",
+    "0.316228,0.948683,0.000000,-0.347242,0.115747,0.633975,-0.601441,0.200480,-0.366025",
+    "0.141421,0.989949,0.000000,-0.264164,0.037738,0.733154,-0.725785,0.103684,-0.266846",
+    "0.000000,1.000000,0.000000,-0.149896,0.000000,0.850104,-0.850104,0.000000,-0.149896",
+    "-0.110432,0.993884,0.000000,-0.000000,-0.000000,1.000000,-0.993884,-0.110432,-0.000000",
+    "0.993884,0.110431,0.000000,-0.000000,0.000000,1.000000,-0.110431,0.993884,-0.000000",
+    "0.970143,0.242536,0.000000,-0.036355,0.145421,0.850104,-0.206180,0.824722,-0.149896",
+    "0.919145,0.393919,0.000000,-0.105116,0.245270,0.733154,-0.288803,0.673875,-0.266846",
+    "0.832050,0.554700,0.000000,-0.203034,0.304552,0.633975,-0.351666,0.527499,-0.366025",
+    "0.707107,0.707107,0.000000,-0.322621,0.322621,0.543744,-0.384485,0.384485,-0.456256",
+    "0.554700,0.832050,0.000000,-0.304552,0.203034,0.633975,-0.527499,0.351666,-0.366025",
+    "0.393919,0.919145,0.000000,-0.245270,0.105116,0.733154,-0.673875,0.288803,-0.266846",
+    "0.242536,0.970143,0.000000,-0.145421,0.036355,0.850104,-0.824722,0.206180,-0.149896",
+    "0.110432,0.993884,0.000000,-0.000000,0.000000,1.000000,-0.993884,0.110432,-0.000000",
+    "0.948683,0.316228,0.000000,-0.000000,0.000000,1.000000,-0.316228,0.948683,-0.000000",
+    "0.894427,0.447214,0.000000,-0.067036,0.134071,0.850104,-0.380178,0.760356,-0.149896",
+    "0.813733,0.581238,0.000000,-0.155101,0.217142,0.733154,-0.426137,0.596592,-0.266846",
+    "0.707107,0.707107,0.000000,-0.258819,0.258819,0.633975,-0.448288,0.448288,-0.366025",
+    "0.581238,0.813733,0.000000,-0.217142,0.155101,0.733154,-0.596592,0.426137,-0.266846",
+    "0.447214,0.894427,0.000000,-0.134071,0.067036,0.850104,-0.760356,0.380178,-0.149896",
+    "0.316228,0.948683,0.000000,-0.000000,0.000000,1.000000,-0.948683,0.316228,-0.000000",
+    "0.874157,0.485643,0.000000,-0.000000,0.000000,1.000000,-0.485643,0.874157,-0.000000",
+    "0.800000,0.600000,0.000000,-0.089938,0.119917,0.850104,-0.510062,0.680083,-0.149896",
+    "0.707107,0.707107,0.000000,-0.188689,0.188689,0.733154,-0.518418,0.518418,-0.266846",
+    "0.600000,0.800000,0.000000,-0.119917,0.089938,0.850104,-0.680083,0.510062,-0.149896",
+    "0.485643,0.874157,0.000000,-0.000000,0.000000,1.000000,-0.874157,0.485643,-0.000000",
+    "0.789352,0.613941,0.000000,-0.000000,0.000000,1.000000,-0.613941,0.789352,-0.000000",
+    "0.707107,0.707107,0.000000,-0.105993,0.105993,0.850104,-0.601114,0.601114,-0.149896",
+    "0.613941,0.789352,0.000000,-0.000000,0.000000,1.000000,-0.789352,0.613941,-0.000000",
+    "0.707107,0.707107,0.000000,-0.000000,0.000000,1.000000,-0.707107,0.707107,-0.000000",
+        };
+
+
+        internal unsafe static void UpdateAlphamaskViewsConstants()
+        {
+            System.Diagnostics.Debug.Assert(s_viewVectorData.Length == 181, "Only supported scheme of views for now");
+
+            Matrix* viewVectors = stackalloc Matrix[s_viewVectorData.Length];
+            for (int i = 0; i < s_viewVectorData.Length; i++)
+            {
+                Matrix mm = Matrix.Identity;
+                string[] sp = s_viewVectorData[i].Split(',');
+                mm.M11 = Convert.ToSingle(sp[0], CultureInfo.InvariantCulture);
+                mm.M12 = Convert.ToSingle(sp[1], CultureInfo.InvariantCulture);
+                mm.M13 = Convert.ToSingle(sp[2], CultureInfo.InvariantCulture);
+                mm.M21 = Convert.ToSingle(sp[3], CultureInfo.InvariantCulture);
+                mm.M22 = Convert.ToSingle(sp[4], CultureInfo.InvariantCulture);
+                mm.M23 = Convert.ToSingle(sp[5], CultureInfo.InvariantCulture);
+                mm.M31 = Convert.ToSingle(sp[6], CultureInfo.InvariantCulture);
+                mm.M32 = Convert.ToSingle(sp[7], CultureInfo.InvariantCulture);
+                mm.M33 = Convert.ToSingle(sp[8], CultureInfo.InvariantCulture);
+                mm = Matrix.Normalize(mm);
+                mm = mm * Matrix.CreateRotationX(MathHelper.PiOver2);
+                mm.Up = -mm.Up;
+                viewVectors[i] = mm;
+            }
+
+            var mapping = MyMapping.MapDiscard(MyCommon.AlphamaskViewsConstants);
+            for (int vectorIndex = 0; vectorIndex < s_viewVectorData.Length; ++vectorIndex)
+                mapping.WriteAndPosition(ref viewVectors[vectorIndex]);
             mapping.Unmap();
         }
     }

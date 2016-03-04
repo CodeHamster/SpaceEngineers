@@ -8,6 +8,7 @@ using System.IO;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading;
 using System.Xml;
 using VRageMath;
 using VRageRender;
@@ -102,6 +103,16 @@ namespace VRage.Utils
         {
             return MyUtils.IsZero(value1.X - value2.X) && MyUtils.IsZero(value1.Y - value2.Y) && MyUtils.IsZero(value1.Z - value2.Z);
         }
+
+        public static bool IsEqual(Quaternion value1, Quaternion value2)
+        {
+            return MyUtils.IsZero(value1.X - value2.X) && MyUtils.IsZero(value1.Y - value2.Y) && MyUtils.IsZero(value1.Z - value2.Z) && MyUtils.IsZero(value1.W - value2.W);
+        }
+        public static bool IsEqual(QuaternionD value1, QuaternionD value2)
+        {
+            return MyUtils.IsZero(value1.X - value2.X) && MyUtils.IsZero(value1.Y - value2.Y) && MyUtils.IsZero(value1.Z - value2.Z) && MyUtils.IsZero(value1.W - value2.W);
+        }
+
         public static bool IsEqual(Matrix value1, Matrix value2)
         {
             return MyUtils.IsZero(value1.Left - value2.Left)
@@ -1332,6 +1343,28 @@ namespace VRage.Utils
             Vector3D newY = xVector * Math.Cos(angle + Math.PI / 2.0) + yVector * Math.Sin(angle + Math.PI / 2.0);
             xOut = newX;
             yOut = newY;
+        }
+
+        /// <summary>
+        /// When location is null, creates new instance, stores it in location and returns it.
+        /// When location is not null, returns it.
+        /// </summary>
+        public static T Init<T>(ref T location)
+            where T : class, new()
+        {
+            if (location == null)
+                location = new T();
+            return location;
+        }
+
+        public static void InterlockedMax(ref long storage, long value)
+        {
+            long localMax = Interlocked.Read(ref storage);
+            while (value > localMax)
+            {
+                Interlocked.CompareExchange(ref storage, value, localMax);
+                localMax = Interlocked.Read(ref storage);
+            }
         }
     }
 }

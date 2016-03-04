@@ -1,5 +1,4 @@
 ﻿using Sandbox.Common;
-using Sandbox.Common.ObjectBuilders.Gui;
 using Sandbox.Engine.Utils;
 using Sandbox.Game.Entities;
 using Sandbox.Game.Entities.Character;
@@ -13,23 +12,27 @@ using Sandbox.Graphics.GUI;
 using System;
 using System.Diagnostics;
 using System.Text;
+using Sandbox.Engine.Networking;
 using VRage;
+using VRage.Game;
 using VRage.Input;
 using VRage.Library.Utils;
 using VRage.Utils;
 using VRageMath;
+using VRage.Game.Entity;
 
 namespace Sandbox.Game.Gui
 {
     public enum MyTerminalPageEnum
     {
+        None =-2,
         Properties = -1,
         Inventory = 0,
         ControlPanel = 1,
         Production = 2,
         Info = 3,
         Factions = 4,
-        Gps = 6
+        Gps = 6,
     }
 
     public partial class MyGuiScreenTerminal : MyGuiScreenBase
@@ -102,7 +105,7 @@ namespace Sandbox.Game.Gui
         private MyGuiScreenTerminal() :
             base(position: new Vector2(0.5f, 0.5f),
                  backgroundColor: MyGuiConstants.SCREEN_BACKGROUND_COLOR,
-                 size: new Vector2(0.99f, 0.9f), backgroundTransition: MySandboxGame.Config.UIBkTransparency, guiTransition: MySandboxGame.Config.UITransparency)
+                 size: new Vector2(0.99f, 0.9f), backgroundTransition: MySandboxGame.Config.UIBkOpacity, guiTransition: MySandboxGame.Config.UIOpacity)
         {
             EnabledBackgroundFade = true;
             m_closeHandler = OnInteractedClose;
@@ -270,7 +273,7 @@ namespace Sandbox.Game.Gui
             }
 
             m_controllerInventory.Init(inventoryPage, m_user, InteractedEntity, m_colorHelper);
-            m_controllerControlPanel.Init(controlPanelPage, MySession.LocalHumanPlayer, grid, InteractedEntity as MyTerminalBlock, m_colorHelper);
+            m_controllerControlPanel.Init(controlPanelPage, MySession.Static.LocalHumanPlayer, grid, InteractedEntity as MyTerminalBlock, m_colorHelper);
             m_controllerProduction.Init(productionPage, grid);
             m_controllerInfo.Init(infoPage, InteractedEntity != null ? InteractedEntity.Parent as MyCubeGrid : null);
             m_controllerFactions.Init(factionsPage);
@@ -737,8 +740,8 @@ namespace Sandbox.Game.Gui
                 VisibleRowsCount = 14,
             };
             factionsTable.SetCustomColumnWidths(new float[] { 0.16f, 0.75f, 0.09f });
-            factionsTable.SetColumnName(0, MyTexts.Get(MySpaceTexts.Tag));
-            factionsTable.SetColumnName(1, MyTexts.Get(MySpaceTexts.Name));
+            factionsTable.SetColumnName(0, MyTexts.Get(MyCommonTexts.Tag));
+            factionsTable.SetColumnName(1, MyTexts.Get(MyCommonTexts.Name));
             top += factionsTable.Size.Y + spacingV;
 
             var createBtn      = new MyGuiControlButton(originAlign: MyGuiDrawAlignEnum.HORISONTAL_LEFT_AND_VERTICAL_TOP, position: new Vector2(left, top)) { Name = "buttonCreate" };
@@ -880,8 +883,8 @@ namespace Sandbox.Game.Gui
                 HeaderVisible = false
             };
             membersTable.SetCustomColumnWidths(new float[] { 0.7f, 0.3f });
-            membersTable.SetColumnName(0, MyTexts.Get(MySpaceTexts.Name));
-            membersTable.SetColumnName(1, MyTexts.Get(MySpaceTexts.Status));
+            membersTable.SetColumnName(0, MyTexts.Get(MyCommonTexts.Name));
+            membersTable.SetColumnName(1, MyTexts.Get(MyCommonTexts.Status));
 
             var btnSpacing = smallerBtn.Y + spacingV;
             var editBtn = new MyGuiControlButton(visualStyle: MyGuiControlButtonStyleEnum.Rectangular, size: smallerBtn, originAlign: MyGuiDrawAlignEnum.HORISONTAL_LEFT_AND_VERTICAL_TOP, position: new Vector2(left + membersTable.Size.X + spacingV, factionDesc.Position.Y)) { Name = "buttonEdit" };
@@ -937,7 +940,7 @@ namespace Sandbox.Game.Gui
                 Position = new Vector2(left, top),
                 Name = "PlayerLabel",
                 OriginAlign = MyGuiDrawAlignEnum.HORISONTAL_LEFT_AND_VERTICAL_TOP,
-                Text = MyTexts.GetString(MySpaceTexts.ScreenCaptionPlayers)
+                Text = MyTexts.GetString(MyCommonTexts.ScreenCaptionPlayers)
             };
             chatPage.Controls.Add(playerLabel);
 
@@ -962,7 +965,7 @@ namespace Sandbox.Game.Gui
                 Position = new Vector2(left, top),
                 Name = "PlayerLabel",
                 OriginAlign = MyGuiDrawAlignEnum.HORISONTAL_LEFT_AND_VERTICAL_TOP,
-                Text = MyTexts.GetString(MySpaceTexts.Factions)
+                Text = MyTexts.GetString(MyCommonTexts.Factions)
             };
             chatPage.Controls.Add(factionLabel);
 
@@ -1158,7 +1161,7 @@ namespace Sandbox.Game.Gui
 					min = 0;
 
 				// TODO: allocations, needs GUI redo
-				MyGuiScreenDialogAmount dialog = new MyGuiScreenDialogAmount(min, max, parseAsInteger: parseAsInteger, defaultAmount: val, caption: MySpaceTexts.DialogAmount_SetValueCaption);
+                MyGuiScreenDialogAmount dialog = new MyGuiScreenDialogAmount(min, max, parseAsInteger: parseAsInteger, defaultAmount: val, caption: MyCommonTexts.DialogAmount_SetValueCaption);
 				dialog.OnConfirmed += (v) => { arg.Value = MyHudMarkerRender.Normalize(v); };
 				MyGuiSandbox.AddScreen(dialog);
 				return true;
@@ -1760,6 +1763,8 @@ namespace Sandbox.Game.Gui
             MyGuiScreenGamePlay.ActiveGameplayScreen = null;
             m_interactedEntity = null;
 
+            MyAnalyticsHelper.ReportActivityEnd(m_instance.m_user, "show_terminal");
+
             if (MyFakes.ENABLE_GPS)
                 m_controllerGps.Close();
             m_controllerControlPanel.Close();
@@ -1805,7 +1810,7 @@ namespace Sandbox.Game.Gui
             // interfere with player typing.
             bool textboxHasFocus = FocusedControl is MyGuiControlTextbox;
 
-            if (!textboxHasFocus && MyInput.Static.IsNewGameControlPressed(MyControlsSpace.TERMINAL))
+            if (!textboxHasFocus && (MyInput.Static.IsNewGameControlPressed(MyControlsSpace.TERMINAL) || MyInput.Static.IsNewGameControlPressed(MyControlsSpace.USE)))
             {
                 GuiSounds closeEnum = m_closingCueEnum.HasValue ? m_closingCueEnum.Value : GuiSounds.MouseClick;
                 MyGuiSoundManager.PlaySound(closeEnum);
@@ -1896,6 +1901,9 @@ namespace Sandbox.Game.Gui
 
             MyGuiSandbox.AddScreen(MyGuiScreenGamePlay.ActiveGameplayScreen = m_instance);
             m_screenOpen = true;
+
+            string target = interactedEntity != null ? interactedEntity.GetType().Name : "";
+            MyAnalyticsHelper.ReportActivityStart(user, "show_terminal", target, "gui", string.Empty);
         }
 
         internal static void Hide()
@@ -1966,7 +1974,7 @@ namespace Sandbox.Game.Gui
                     m_controllerControlPanel.Close();
 
                     var controlPanelPage = (MyGuiControlTabPage)m_terminalTabs.Controls.GetControlByName("PageControlPanel");
-                    m_controllerControlPanel.Init(controlPanelPage, MySession.LocalHumanPlayer, grid, InteractedEntity as MyTerminalBlock, m_colorHelper);
+                    m_controllerControlPanel.Init(controlPanelPage, MySession.Static.LocalHumanPlayer, grid, InteractedEntity as MyTerminalBlock, m_colorHelper);
                 }
 
                 if (m_controllerProduction != null)
@@ -2001,6 +2009,15 @@ namespace Sandbox.Game.Gui
             m_terminalTabs.Visible = true;
             m_propertiesTableParent.Visible = m_terminalTabs.SelectedPage == (int) MyTerminalPageEnum.Properties;
             m_terminalNotConnected.Visible = false;
+        }
+
+        public static MyTerminalPageEnum GetCurrentScreen()
+        {
+            if(IsOpen)
+            {
+                return (MyTerminalPageEnum)m_instance.m_terminalTabs.SelectedPage;
+            }
+            return MyTerminalPageEnum.None;
         }
 
         #endregion

@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text;
 using SharpDX;
 using SharpDX.Direct3D11;
+using VRage.Utils;
 
 namespace VRageRender
 {
@@ -15,25 +16,31 @@ namespace VRageRender
         internal static SamplerId m_textureSamplerState;
         internal static SamplerId m_shadowmapSamplerState;
         internal static SamplerId m_alphamaskSamplerState;
+        internal static SamplerId m_alphamaskarraySamplerState;
 
+        private static SamplerState[] StandardSamplerArray;
         internal static SamplerState[] StandardSamplers 
         { 
             get {
-                return new[] { 
-                    MyPipelineStates.GetSampler(m_defaultSamplerState), 
-                    MyPipelineStates.GetSampler(m_pointSamplerState), 
-                    MyPipelineStates.GetSampler(m_linearSamplerState), 
-                    MyPipelineStates.GetSampler(m_textureSamplerState), 
-                    MyPipelineStates.GetSampler(m_alphamaskSamplerState) }; 
+                Array.Resize(ref StandardSamplerArray, 6);
+                
+                StandardSamplerArray[0] = MyPipelineStates.GetSampler(m_defaultSamplerState);
+                StandardSamplerArray[1] = MyPipelineStates.GetSampler(m_pointSamplerState);
+                StandardSamplerArray[2] = MyPipelineStates.GetSampler(m_linearSamplerState);
+                StandardSamplerArray[3] = MyPipelineStates.GetSampler(m_textureSamplerState);
+                StandardSamplerArray[4] = MyPipelineStates.GetSampler(m_alphamaskSamplerState);
+                StandardSamplerArray[5] = MyPipelineStates.GetSampler(m_alphamaskarraySamplerState);
+
+                return StandardSamplerArray;
             } 
         }
 
-        internal static void UpdateTextureSampler()
+        internal static void UpdateTextureSampler(SamplerId samplerState, TextureAddressMode addressMode)
         {
             SamplerStateDescription description = new SamplerStateDescription();
-            description.AddressU = TextureAddressMode.Wrap;
-            description.AddressV = TextureAddressMode.Wrap;
-            description.AddressW = TextureAddressMode.Wrap;
+            description.AddressU = addressMode;
+            description.AddressV = addressMode;
+            description.AddressW = addressMode;
             description.MaximumLod = System.Single.MaxValue;
 
             if(MyRender11.RenderSettings.AnisotropicFiltering == MyTextureAnisoFiltering.NONE)
@@ -64,7 +71,7 @@ namespace VRageRender
                 }
             }
 
-            MyPipelineStates.ChangeSamplerState(m_textureSamplerState, description);
+            MyPipelineStates.ChangeSamplerState(samplerState, description);
         }
 
         private static void InitilizeSamplerStates()
@@ -105,7 +112,10 @@ namespace VRageRender
             m_shadowmapSamplerState = MyPipelineStates.CreateSamplerState(description);
 
             m_textureSamplerState = MyPipelineStates.CreateSamplerState(description);
-            UpdateTextureSampler();
+            m_alphamaskarraySamplerState = MyPipelineStates.CreateSamplerState(description);
+
+            UpdateTextureSampler(m_textureSamplerState, TextureAddressMode.Wrap);
+            UpdateTextureSampler(m_alphamaskarraySamplerState, TextureAddressMode.Clamp);
         }
     }
 }

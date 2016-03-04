@@ -1,16 +1,10 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Reflection;
-using System.Text;
 using Sandbox.Common;
 
 using Sandbox.Common.ObjectBuilders;
 using Sandbox.Definitions;
 using Sandbox.Engine.Models;
-using Sandbox.Graphics.TransparentGeometry;
 using Sandbox.Game.Entities.Cube;
-using Sandbox.Game.GameSystems.Electricity;
 using Sandbox.Game.Lights;
 using Sandbox.Game.Multiplayer;
 using Sandbox.Game.World;
@@ -19,24 +13,31 @@ using Sandbox.Game.Gui;
 using VRageMath;
 using Sandbox.Engine.Utils;
 using Sandbox.Game.Components;
+using Sandbox.Game.EntityComponents;
 using Sandbox.ModAPI.Ingame;
 using Sandbox.Game.Localization;
 using VRage;
+using VRage.Game;
 using VRage.Utils;
 using VRage.ModAPI;
+using VRage.Game.Models;
 
 namespace Sandbox.Game.Entities.Blocks
 {
-    public abstract class MyLightingBlock : MyFunctionalBlock, IMyPowerConsumer, IMyLightingBlock
+    public abstract class MyLightingBlock : MyFunctionalBlock, IMyLightingBlock
     {
+        private const double MIN_MOVEMENT_SQUARED_FOR_UPDATE = 0.0001;
+
         private const int NUM_DECIMALS = 1;
-        private float m_blinkIntervalSeconds;
-        private float m_blinkLength;
-        private float m_blinkOffset;
+        private readonly Sync<float> m_blinkIntervalSeconds;
+        private readonly Sync<float> m_blinkLength;
+        private readonly Sync<float> m_blinkOffset;
 
         protected MyLight m_light;
-        private float m_intesity;
-        private new MySyncLightingBlock SyncObject;
+        private readonly Sync<float> m_intesity;
+        private readonly Sync<Color> m_lightColor;
+        private readonly Sync<float> m_lightRadius;
+        private readonly Sync<float> m_lightFalloff;
 
         private Vector3D m_lightWorldPosition;
         private Vector3 m_lightLocalPosition;
@@ -99,7 +100,7 @@ namespace Sandbox.Game.Entities.Blocks
 
         protected override bool CheckIsWorking()
         {
-            return (MyFakes.ENABLE_LIGHT_WITHOUT_POWER || PowerReceiver.IsPowered) && base.CheckIsWorking();
+			return (MyFakes.ENABLE_LIGHT_WITHOUT_POWER || ResourceSink.IsPoweredByType(MyResourceDistributorComponent.ElectricityId)) && base.CheckIsWorking();
         }
 
         public bool IsLargeLight { get; private set; }
@@ -107,12 +108,6 @@ namespace Sandbox.Game.Entities.Blocks
         public MyLight Light
         {
             get { return m_light; }
-        }
-
-        public MyPowerReceiver PowerReceiver
-        {
-            get;
-            private set;
         }
 
         internal new MyRenderComponentLight Render
@@ -128,14 +123,14 @@ namespace Sandbox.Game.Entities.Blocks
         {
             var lightColor = new MyTerminalControlColor<MyLightingBlock>("Color", MySpaceTexts.BlockPropertyTitle_LightColor);
             lightColor.Getter = (x) => x.Color;
-            lightColor.Setter = (x, v) => x.SyncObject.SendChangeLightColorRequest(v);
+            lightColor.Setter = (x, v) => x.m_lightColor.Value = v;
             MyTerminalControlFactory.AddControl(lightColor);
 
             var lightRadius = new MyTerminalControlSlider<MyLightingBlock>("Radius", MySpaceTexts.BlockPropertyTitle_LightRadius, MySpaceTexts.BlockPropertyDescription_LightRadius);
             lightRadius.SetLimits((x) => x.RadiusBounds.Min, (x) => x.RadiusBounds.Max);
             lightRadius.DefaultValueGetter = (x) => x.RadiusBounds.Default;
             lightRadius.Getter = (x) => x.Radius;
-            lightRadius.Setter = (x, v) => x.SyncObject.SendChangeLightRadiusRequest(v);
+            lightRadius.Setter = (x, v) => x.m_lightRadius.Value = v;
             lightRadius.Writer = (x, result) => result.Append(MyValueFormatter.GetFormatedFloat(x.m_light.Range, 1)).Append(" m");
             lightRadius.EnableActions();
             MyTerminalControlFactory.AddControl(lightRadius);
@@ -144,7 +139,7 @@ namespace Sandbox.Game.Entities.Blocks
             lightFalloff.SetLimits((x) => x.FalloffBounds.Min, (x) => x.FalloffBounds.Max);
             lightFalloff.DefaultValueGetter = (x) => x.FalloffBounds.Default;
             lightFalloff.Getter = (x) => x.Falloff;
-            lightFalloff.Setter = (x, v) => x.SyncObject.SendChangeLightFalloffRequest(v);
+            lightFalloff.Setter = (x, v) => x.m_lightFalloff.Value = v;
             lightFalloff.Writer = (x, result) => result.Append(MyValueFormatter.GetFormatedFloat(x.m_light.Falloff, 1));
             lightRadius.EnableActions();
             MyTerminalControlFactory.AddControl(lightFalloff);
@@ -153,7 +148,7 @@ namespace Sandbox.Game.Entities.Blocks
             lightIntensity.SetLimits((x) => x.IntensityBounds.Min, (x) => x.IntensityBounds.Max);
             lightIntensity.DefaultValueGetter = (x) => x.IntensityBounds.Default;
             lightIntensity.Getter = (x) => x.Intensity;
-            lightIntensity.Setter = (x, v) => x.SyncObject.SendChangeLightIntensityRequest(v);
+            lightIntensity.Setter = (x, v) => x.Intensity = v;
             lightIntensity.Writer = (x, result) => result.Append(MyValueFormatter.GetFormatedFloat(x.Intensity, 1));
             lightRadius.EnableActions();
             MyTerminalControlFactory.AddControl(lightIntensity);
@@ -162,7 +157,7 @@ namespace Sandbox.Game.Entities.Blocks
             lightBlinkTime.SetLimits((x) => x.BlinkIntervalSecondsBounds.Min, (x) => x.BlinkIntervalSecondsBounds.Max);
             lightBlinkTime.DefaultValueGetter = (x) => x.BlinkIntervalSecondsBounds.Default;
             lightBlinkTime.Getter = (x) => x.BlinkIntervalSeconds;
-            lightBlinkTime.Setter = (x, v) => x.SyncObject.SendChangeLightBlinkIntervalRequest(v);
+            lightBlinkTime.Setter = (x, v) => x.BlinkIntervalSeconds = v;
             lightBlinkTime.Writer = (x, result) => result.Append(MyValueFormatter.GetFormatedFloat(x.BlinkIntervalSeconds, NUM_DECIMALS)).Append(" s");
             lightBlinkTime.EnableActions();
             MyTerminalControlFactory.AddControl(lightBlinkTime);
@@ -171,7 +166,7 @@ namespace Sandbox.Game.Entities.Blocks
             lightBlinkLenght.SetLimits((x) => x.BlinkLenghtBounds.Min, (x) => x.BlinkLenghtBounds.Max);
             lightBlinkLenght.DefaultValueGetter = (x) => x.BlinkLenghtBounds.Default;
             lightBlinkLenght.Getter = (x) => x.BlinkLength;
-            lightBlinkLenght.Setter = (x, v) => x.SyncObject.SendChangeLightBlinkLengthRequest(v);
+            lightBlinkLenght.Setter = (x, v) => x.BlinkLength = v;
             lightBlinkLenght.Writer = (x, result) => result.Append(MyValueFormatter.GetFormatedFloat(x.BlinkLength, NUM_DECIMALS)).Append(" %");
             lightBlinkLenght.EnableActions();
             MyTerminalControlFactory.AddControl(lightBlinkLenght);
@@ -180,7 +175,7 @@ namespace Sandbox.Game.Entities.Blocks
             ligthBlinkOffset.SetLimits((x) => x.BlinkOffsetBounds.Min, (x) => x.BlinkOffsetBounds.Max);
             ligthBlinkOffset.DefaultValueGetter = (x) => x.BlinkOffsetBounds.Default;
             ligthBlinkOffset.Getter = (x) => x.BlinkOffset;
-            ligthBlinkOffset.Setter = (x, v) => x.SyncObject.SendChangeLightBlinkOffsetRequest(v);
+            ligthBlinkOffset.Setter = (x, v) => x.BlinkOffset = v;
             ligthBlinkOffset.Writer = (x, result) => result.Append(MyValueFormatter.GetFormatedFloat(x.BlinkOffset, NUM_DECIMALS)).Append(" %");
             ligthBlinkOffset.EnableActions();
             MyTerminalControlFactory.AddControl(ligthBlinkOffset);
@@ -223,7 +218,7 @@ namespace Sandbox.Game.Entities.Blocks
             {
                 if (m_blinkLength != value)
                 {
-                    m_blinkLength = (float)Math.Round(value, NUM_DECIMALS);
+                    m_blinkLength.Value = (float)Math.Round(value, NUM_DECIMALS);
                     RaisePropertiesChanged();
                 }
             }
@@ -236,7 +231,7 @@ namespace Sandbox.Game.Entities.Blocks
             {
                 if (m_blinkOffset != value)
                 {
-                    m_blinkOffset = (float)Math.Round(value, NUM_DECIMALS);
+                    m_blinkOffset.Value = (float)Math.Round(value, NUM_DECIMALS);
                     RaisePropertiesChanged();
                 }
             }
@@ -249,7 +244,10 @@ namespace Sandbox.Game.Entities.Blocks
             {
                 if (m_blinkIntervalSeconds != value)
                 {
-                    m_blinkIntervalSeconds = (float)Math.Round(value, NUM_DECIMALS);
+                    if (value > m_blinkIntervalSeconds)
+                        m_blinkIntervalSeconds.Value = (float)Math.Round(value + 0.04999f, NUM_DECIMALS);
+                    else
+                        m_blinkIntervalSeconds.Value = (float)Math.Round(value - 0.04999f, NUM_DECIMALS);
                     if (m_blinkIntervalSeconds == 0.0f && Enabled)
                     {
                         m_light.ReflectorOn = true;
@@ -281,7 +279,7 @@ namespace Sandbox.Game.Entities.Blocks
             {
                 if (m_intesity != value)
                 {
-                    m_intesity = value;
+                    m_intesity.Value = value;
                     UpdateIntensity();
                     RaisePropertiesChanged();
                 }
@@ -293,12 +291,19 @@ namespace Sandbox.Game.Entities.Blocks
 
         public override void Init(MyObjectBuilder_CubeBlock objectBuilder, MyCubeGrid cubeGrid)
         {
+            var sinkComp = new MyResourceSinkComponent();
+            sinkComp.Init(
+                BlockDefinition.ResourceSinkGroup,
+                BlockDefinition.RequiredPowerInput,
+                () => (Enabled && IsFunctional) ? ResourceSink.MaxRequiredInput : 0f);
+            sinkComp.IsPoweredChanged += Receiver_IsPoweredChanged;
+            ResourceSink = sinkComp;
+
             base.Init(objectBuilder, cubeGrid);
             this.IsLargeLight = cubeGrid.GridSizeEnum == MyCubeSize.Large;
-            this.SyncObject = new MySyncLightingBlock(this);
 
             var builder = (MyObjectBuilder_LightingBlock)objectBuilder;
-            MyModel lightModel = MyModels.GetModelOnlyDummies(BlockDefinition.Model);
+            MyModel lightModel = VRage.Game.Models.MyModels.GetModelOnlyDummies(BlockDefinition.Model);
             foreach (var pair in lightModel.Dummies)
             {
                 if (!pair.Key.ToLower().Contains("light"))
@@ -315,13 +320,13 @@ namespace Sandbox.Game.Entities.Blocks
             float radius = RadiusBounds.Clamp((builder.Radius == -1f) ? RadiusBounds.Default : builder.Radius);
             float falloff = FalloffBounds.Clamp(builder.Falloff);
 
-            m_blinkIntervalSeconds = BlinkIntervalSecondsBounds.Clamp((builder.BlinkIntervalSeconds == -1f) ? BlinkIntervalSecondsBounds.Default : builder.BlinkIntervalSeconds);
+            m_blinkIntervalSeconds.Value = BlinkIntervalSecondsBounds.Clamp((builder.BlinkIntervalSeconds == -1f) ? BlinkIntervalSecondsBounds.Default : builder.BlinkIntervalSeconds);
 
-            m_blinkLength = BlinkLenghtBounds.Clamp((builder.BlinkLenght == -1f) ? BlinkLenghtBounds.Default : builder.BlinkLenght);
+            m_blinkLength.Value = BlinkLenghtBounds.Clamp((builder.BlinkLenght == -1f) ? BlinkLenghtBounds.Default : builder.BlinkLenght);
 
-            m_blinkOffset = BlinkOffsetBounds.Clamp((builder.BlinkOffset == -1f) ? BlinkOffsetBounds.Default : builder.BlinkOffset);
+            m_blinkOffset.Value = BlinkOffsetBounds.Clamp((builder.BlinkOffset == -1f) ? BlinkOffsetBounds.Default : builder.BlinkOffset);
 
-            m_intesity = IntensityBounds.Clamp((builder.Intensity == -1f) ? IntensityBounds.Default : builder.Intensity);
+            m_intesity.Value = IntensityBounds.Clamp((builder.Intensity == -1f) ? IntensityBounds.Default : builder.Intensity);
 
 
             m_positionDirty = true;
@@ -338,18 +343,14 @@ namespace Sandbox.Game.Entities.Blocks
             UpdateIntensity();
             UpdateLightPosition();
 
-            NeedsUpdate = MyEntityUpdateEnum.EACH_FRAME;
+            NeedsUpdate |= MyEntityUpdateEnum.EACH_FRAME | MyEntityUpdateEnum.BEFORE_NEXT_FRAME | MyEntityUpdateEnum.EACH_100TH_FRAME;
             Render.NeedsDrawFromParent = true;
 
-            PowerReceiver = new MyPowerReceiver(
-                MyConsumerGroupEnum.Utility,
-                false,
-                BlockDefinition.RequiredPowerInput,
-                () => (Enabled && IsFunctional) ? PowerReceiver.MaxRequiredInput : 0f);
-            PowerReceiver.Update();
-            AddDebugRenderComponent(new Components.MyDebugRenderComponentDrawPowerReciever(PowerReceiver, this));
-            PowerReceiver.IsPoweredChanged += Receiver_IsPoweredChanged;
+			
+			AddDebugRenderComponent(new MyDebugRenderComponentDrawPowerReciever(ResourceSink, this));
+			ResourceSink.Update();
             SlimBlock.ComponentStack.IsFunctionalChanged += ComponentStack_IsFunctionalChanged;
+            IsWorkingChanged += CubeBlock_OnWorkingChanged;
         }
         protected abstract void InitLight(MyLight light, Vector4 color, float radius, float falloff);
 
@@ -380,12 +381,40 @@ namespace Sandbox.Game.Entities.Blocks
         public MyLightingBlock()
         {
             this.Render = new MyRenderComponentLight();
+
+            m_lightColor.ValueChanged += x => LightColorChanged();
+            m_lightRadius.ValueChanged += x => LightRadiusChanged();
+            m_lightFalloff.ValueChanged += x => LightFalloffChanged();
         }
         #endregion
+        void LightFalloffChanged()
+        {
+            Falloff = m_lightFalloff.Value;
+        }
 
+        void LightRadiusChanged()
+        {
+            Radius = m_lightRadius.Value;
+        }
+
+        void LightColorChanged()
+        {
+            Color = m_lightColor.Value;
+        }
+        public override void UpdateOnceBeforeFrame()
+        {
+            base.UpdateOnceBeforeFrame();
+            m_light.ParentID = Render.GetRenderObjectID();
+        }
+
+        //lights wont update at all when further any axis
+        const int MaxLightUpdateDistance = 5000;
         public override void UpdateAfterSimulation()
         {
             base.UpdateAfterSimulation();
+
+            if ((MySector.MainCamera.Position - PositionComp.GetPosition()).AbsMax() > MaxLightUpdateDistance)
+                return;
 
             float newLightPower = MathHelper.Clamp(Render.CurrentLightPower + (IsWorking ? 1 : -1) * m_lightTurningOnSpeed, 0, 1);
 
@@ -404,6 +433,15 @@ namespace Sandbox.Game.Entities.Blocks
             UpdateLightPosition();
             UpdateLightProperties();
             UpdateEmissivity(false);
+        }
+
+        public override void UpdateAfterSimulation100()
+        {
+            base.UpdateAfterSimulation100();
+            if ((MySector.MainCamera.Position - PositionComp.GetPosition()).AbsMax() > MaxLightUpdateDistance)
+                return;
+
+            m_positionDirty = true;
         }
 
         private void UpdateIntensity()
@@ -457,8 +495,23 @@ namespace Sandbox.Game.Entities.Blocks
 
         protected override void OnEnabledChanged()
         {
-            PowerReceiver.Update();
+            ResourceSink.Update();
             base.OnEnabledChanged();
+        }
+
+        private void ComponentStack_IsFunctionalChanged()
+        {
+            ResourceSink.Update();
+        }
+
+        private void Receiver_IsPoweredChanged()
+        {
+            UpdateIsWorking();
+        }
+
+        private void CubeBlock_OnWorkingChanged(MyCubeBlock block)
+        {
+            m_positionDirty = true;
         }
 
         private Color ComputeBulbColor()
@@ -485,10 +538,22 @@ namespace Sandbox.Game.Entities.Blocks
             ProfilerShort.End();
         }
 
+        Vector3D oldWorldPosition = Vector3D.Zero;
         protected override void WorldPositionChanged(object source)
         {
             base.WorldPositionChanged(source);
-            m_positionDirty = true;
+
+            Vector3D worldPosition;
+            SlimBlock.ComputeWorldCenter(out worldPosition);
+
+            Vector3D diff = worldPosition - oldWorldPosition;
+            double lengthSq = diff.LengthSquared();
+            if (lengthSq > MIN_MOVEMENT_SQUARED_FOR_UPDATE)
+            {
+                if (m_light != null)
+                    m_light.MarkPropertiesDirty();
+            }
+            oldWorldPosition = worldPosition;
         }
 
         private void UpdateLightPosition()
@@ -497,10 +562,11 @@ namespace Sandbox.Game.Entities.Blocks
                 return;
 
             ProfilerShort.Begin("UpdateLightPosition");
+            m_positionDirty = false;
 
             var newPos = PositionComp.GetPosition() + Vector3.TransformNormal(m_lightLocalPosition, WorldMatrix);
 
-            if (Vector3D.DistanceSquared(m_lightWorldPosition, newPos) > 0.0001)
+            if (Vector3D.DistanceSquared(m_lightWorldPosition, newPos) > MIN_MOVEMENT_SQUARED_FOR_UPDATE)
             {
                 m_lightWorldPosition = newPos;
                 m_light.MarkPositionDirty();
@@ -512,21 +578,14 @@ namespace Sandbox.Game.Entities.Blocks
             m_light.Position = Vector3D.Transform(m_lightWorldPosition, toLocal);
             m_light.ReflectorDirection = Vector3D.TransformNormal(WorldMatrix.Forward, toLocal);
             m_light.ReflectorUp = Vector3D.TransformNormal(WorldMatrix.Up, toLocal);
-            m_light.MarkPropertiesDirty();
-            m_positionDirty = false;
 
             ProfilerShort.End();
-        }
+        }        
 
-
-        private void ComponentStack_IsFunctionalChanged()
+        public override void OnCubeGridChanged(MyCubeGrid oldGrid)
         {
-            PowerReceiver.Update();
-        }
-
-        private void Receiver_IsPoweredChanged()
-        {
-            UpdateIsWorking();
+            base.OnCubeGridChanged(oldGrid);
+            m_positionDirty = true;
         }
 
         float IMyLightingBlock.Radius { get { return Radius;} }

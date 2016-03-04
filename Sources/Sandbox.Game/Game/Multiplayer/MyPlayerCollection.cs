@@ -6,17 +6,25 @@ using Sandbox.Engine.Networking;
 using Sandbox.Engine.Utils;
 using Sandbox.Game.Entities;
 using Sandbox.Game.Entities.Character;
+using Sandbox.Game.Localization;
+using Sandbox.Game.Replication;
 using Sandbox.Game.Screens.Helpers;
 using Sandbox.Game.SessionComponents;
 using Sandbox.Game.Weapons;
 using Sandbox.Game.World;
+using Sandbox.Graphics.GUI;
 using SteamSDK;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.Text;
 using VRage;
 using VRage.Collections;
+using VRage.Game;
+using VRage.Game.Entity;
+using VRage.Library.Utils;
+using VRage.Network;
 using VRage.Serialization;
 using VRage.Trace;
 using VRageMath;
@@ -50,17 +58,6 @@ namespace Sandbox.Game.Multiplayer
             public long EntityId;
             public long GetEntityId() { return EntityId; }
 
-            public ulong ClientSteamId;
-            public int PlayerSerialId;
-        }
-
-        [MessageId(5, P2PMessageEnum.Reliable)]
-        struct CharacterChangedMsg : IEntityMessage
-        {
-            public long CharacterEntityId;
-            public long GetEntityId() { return CharacterEntityId; }
-
-            public long ControlledEntityId;
             public ulong ClientSteamId;
             public int PlayerSerialId;
         }
@@ -117,13 +114,15 @@ namespace Sandbox.Game.Multiplayer
             [ProtoMember]
             public bool NewIdentity;
             [ProtoMember]
-            public long MedicalRoom;
+            public long RespawnEntityId;
             [ProtoMember]
             public string RespawnShipId;
             [ProtoMember]
             public int PlayerSerialId;
             [ProtoMember]
             public Vector3D? SpawnPosition;
+            [ProtoMember]
+            public VRage.ObjectBuilders.SerializableDefinitionId? BotDefinitionId;
         }
 
         [MessageId(23, P2PMessageEnum.Reliable)]
@@ -166,66 +165,49 @@ namespace Sandbox.Game.Multiplayer
             public long IdentityId;
             [ProtoMember]
             public string DisplayName;
-			[ProtoMember]
-			public List<Vector3> BuildColors;
+            [ProtoMember]
+            public List<Vector3> BuildColors;
         }
 
+        [ProtoContract]
         [MessageId(31, P2PMessageEnum.Reliable)]
         struct PlayerRemoveMsg
         {
-            public ulong ClientSteamId;
-            public int PlayerSerialId;
-        }
-
-        [MessageId(7351, P2PMessageEnum.Reliable)]
-        [ProtoContract]
-        struct All_Identities_Players_Factions_RequestMsg
-        {
             [ProtoMember]
             public ulong ClientSteamId;
             [ProtoMember]
             public int PlayerSerialId;
+            [ProtoMember]
+            public bool RemoveCharacter;
         }
 
-        [MessageId(7352, P2PMessageEnum.Reliable)]
+        [MessageId(7353, P2PMessageEnum.Reliable)]
         [ProtoContract]
-        struct All_Identities_Players_Factions_SuccessMsg
+        struct PlayerChangeColorMsg
         {
             [ProtoMember]
-            public List<MyObjectBuilder_Identity> Identities;
+            public int SerialId;
+
             [ProtoMember]
-            public List<AllPlayerData> Players;
+            public int ColorIndex;
+
             [ProtoMember]
-            public List<MyObjectBuilder_Faction> Factions;
+            public Vector3 NewColor;
         }
 
-		[MessageId(7353, P2PMessageEnum.Reliable)]
-		[ProtoContract]
-		struct PlayerChangeColorMsg
-		{
-			[ProtoMember]
-			public int SerialId;
+        [MessageId(7354, P2PMessageEnum.Reliable)]
+        [ProtoContract]
+        struct PlayerChangeColorsMsg
+        {
+            [ProtoMember]
+            public int SerialId;
 
-			[ProtoMember]
-			public int ColorIndex;
-
-			[ProtoMember]
-			public Vector3 NewColor;
-		}
-
-		[MessageId(7354, P2PMessageEnum.Reliable)]
-		[ProtoContract]
-		struct PlayerChangeColorsMsg
-		{
-			[ProtoMember]
-			public int SerialId;
-
-			[ProtoMember]
-			public List<Vector3> NewColors;
-		}
+            [ProtoMember]
+            public List<Vector3> NewColors;
+        }
 
         [ProtoContract]
-        public struct AllPlayerData 
+        public struct AllPlayerData
         {
             [ProtoMember]
             public ulong SteamId;
@@ -235,8 +217,31 @@ namespace Sandbox.Game.Multiplayer
             public MyObjectBuilder_Player Player;
         }
 
+        [MessageId(7355, P2PMessageEnum.Reliable)]
+        struct IdentityRemovedMsg
+        {
+            [ProtoMember]
+            public long IdentityId;
+            [ProtoMember]
+            public ulong SteamId;
+            [ProtoMember]
+            public int SerialId;
+        }
 
-        
+        [MessageId(7356, P2PMessageEnum.Reliable)]
+        struct NewNpcIdentityMsg
+        {
+            [ProtoMember]
+            public long IdentityId; // Ignored in request
+        }
+
+        [MessageId(7357, P2PMessageEnum.Reliable)]
+        struct IdentityFirstSpawnMsg
+        {
+            [ProtoMember]
+            public long IdentityId;
+        }
+
         public delegate void RespawnRequestedDelegate(ref RespawnMsg respawnMsg, MyNetworkClient client);
 
         #endregion
@@ -244,7 +249,7 @@ namespace Sandbox.Game.Multiplayer
         #region Fields
 
         // Collection of players, indexed by the player ID. If a player is not here, it means that the player is not online right now
-        private Dictionary<PlayerId, MyPlayer> m_players = new Dictionary<PlayerId, MyPlayer>();
+        private readonly Dictionary<PlayerId, MyPlayer> m_players = new Dictionary<PlayerId, MyPlayer>(PlayerId.Comparer);
         private List<MyPlayer> m_tmpRemovedPlayers = new List<MyPlayer>();
 
         // Which entity is controlled by which player id
@@ -255,7 +260,7 @@ namespace Sandbox.Game.Multiplayer
         // All identities that were controlled by a player are here - currently controlled or not.
         // Only one identity per player is allowed. If a player wants another one, the old one should be removed from this
         // dictionary and stay only in m_allIdentities (i.e. death of old identity)
-        private Dictionary<PlayerId, long> m_playerIdentityIds = new Dictionary<PlayerId, long>();
+        private readonly Dictionary<PlayerId, long> m_playerIdentityIds = new Dictionary<PlayerId, long>(PlayerId.Comparer);
 
         // These identities are NPCs generated by the player and can be assigned ownership of blocks
         private HashSet<long> m_npcIdentities = new HashSet<long>();
@@ -264,6 +269,9 @@ namespace Sandbox.Game.Multiplayer
 
         // The game component that handles respawns. This can be different per each game
         public MyRespawnComponentBase RespawnComponent { get; set; }
+
+
+        static Dictionary<long, PlayerId> m_missingControlledEntities = new Dictionary<long, PlayerId>();
 
         #endregion
 
@@ -276,19 +284,26 @@ namespace Sandbox.Game.Multiplayer
 
         public event PlayerRequestDelegate PlayerRequesting;
 
-        public event Action<bool, ulong> PlayersChanged;
+        public event Action<bool, PlayerId> PlayersChanged;
 
         public event Action<long> PlayerCharacterDied;
+        public event Action IdentitiesChanged;
+
+        public DictionaryReader<long, PlayerId> ControlledEntities
+        {
+            get { return m_controlledEntities.Reader; }
+        }
 
         #region Construction & (de)serialization
 
         static MyPlayerCollection()
         {
-            MySyncLayer.RegisterEntityMessage<MySyncEntity, ControlChangedMsg>(OnControlChangedRequest, MyMessagePermissions.ToServer, MyTransportMessageEnum.Request);
-            MySyncLayer.RegisterEntityMessage<MySyncEntity, ControlChangedMsg>(OnControlChangedSuccess, MyMessagePermissions.FromServer, MyTransportMessageEnum.Success);
-            MySyncLayer.RegisterEntityMessage<MySyncEntity, CharacterChangedMsg>(OnCharacterChanged, MyMessagePermissions.FromServer);
-            MySyncLayer.RegisterEntityMessage<MySyncEntity, ControlReleasedMsg>(OnControlReleased, MyMessagePermissions.Any);
+            MySyncLayer.RegisterMessage<ControlChangedMsg>(OnControlChangedRequest, MyMessagePermissions.ToServer, MyTransportMessageEnum.Request);
+            MySyncLayer.RegisterMessage<ControlChangedMsg>(OnControlChangedSuccess, MyMessagePermissions.FromServer, MyTransportMessageEnum.Success);
+            MySyncLayer.RegisterMessage<ControlReleasedMsg>(OnControlReleased, MyMessagePermissions.ToServer | MyMessagePermissions.FromServer);
             MySyncLayer.RegisterMessage<IdentityCreatedMsg>(OnIdentityCreated, MyMessagePermissions.FromServer);
+            MySyncLayer.RegisterMessage<IdentityRemovedMsg>(OnIdentityRemoved, MyMessagePermissions.ToServer, MyTransportMessageEnum.Request);
+            MySyncLayer.RegisterMessage<IdentityRemovedMsg>(OnIdentityRemoved, MyMessagePermissions.FromServer, MyTransportMessageEnum.Success);
             MySyncLayer.RegisterMessage<PlayerIdentityChangedMsg>(OnPlayerIdentityChanged, MyMessagePermissions.FromServer);
             MySyncLayer.RegisterMessage<RespawnMsg>(OnRespawnRequest, MyMessagePermissions.ToServer);
             MySyncLayer.RegisterMessage<RespawnMsg>(OnRespawnRequestFailure, MyMessagePermissions.FromServer, MyTransportMessageEnum.Failure);
@@ -300,11 +315,11 @@ namespace Sandbox.Game.Multiplayer
             MySyncLayer.RegisterMessage<PlayerCreatedMsg>(OnPlayerCreated, MyMessagePermissions.FromServer, MyTransportMessageEnum.Success);
             MySyncLayer.RegisterMessage<PlayerRemoveMsg>(OnPlayerRemoveRequest, MyMessagePermissions.ToServer, MyTransportMessageEnum.Request);
             MySyncLayer.RegisterMessage<PlayerRemoveMsg>(OnPlayerRemoved, MyMessagePermissions.FromServer, MyTransportMessageEnum.Success);
-			MySyncLayer.RegisterMessage<PlayerChangeColorMsg>(OnPlayerColorChangedRequest, MyMessagePermissions.ToServer, MyTransportMessageEnum.Request);
-			MySyncLayer.RegisterMessage<PlayerChangeColorsMsg>(OnPlayerColorsChangedRequest, MyMessagePermissions.ToServer, MyTransportMessageEnum.Request);
-
-            MySyncLayer.RegisterMessage<All_Identities_Players_Factions_RequestMsg>(OnAll_Identities_Players_Factions_Request, MyMessagePermissions.ToServer, MyTransportMessageEnum.Request);
-            MySyncLayer.RegisterMessage<All_Identities_Players_Factions_SuccessMsg>(OnAll_Identities_Players_Factions_Success, MyMessagePermissions.FromServer, MyTransportMessageEnum.Success);
+            MySyncLayer.RegisterMessage<PlayerChangeColorMsg>(OnPlayerColorChangedRequest, MyMessagePermissions.ToServer, MyTransportMessageEnum.Request);
+            MySyncLayer.RegisterMessage<PlayerChangeColorsMsg>(OnPlayerColorsChangedRequest, MyMessagePermissions.ToServer, MyTransportMessageEnum.Request);
+            MySyncLayer.RegisterMessage<NewNpcIdentityMsg>(OnNpcIdentityRequest, MyMessagePermissions.ToServer, MyTransportMessageEnum.Request);
+            MySyncLayer.RegisterMessage<NewNpcIdentityMsg>(OnNpcIdentitySuccess, MyMessagePermissions.FromServer, MyTransportMessageEnum.Success);
+            MySyncLayer.RegisterMessage<IdentityFirstSpawnMsg>(OnIdentityFirstSpawn, MyMessagePermissions.FromServer, MyTransportMessageEnum.Success);
         }
 
         public MyPlayerCollection()
@@ -365,37 +380,77 @@ namespace Sandbox.Game.Multiplayer
 
             foreach (var controlledEntityIt in controlledEntities.Dictionary)
             {
-                MyEntity controlledEntity;
-                MyEntities.TryGetEntityById(controlledEntityIt.Key, out controlledEntity);
-
                 var playerId = new PlayerId(controlledEntityIt.Value.ClientId, controlledEntityIt.Value.SerialId);
-                if (savingPlayerId != null && playerId == savingPlayerId) playerId = new PlayerId(MySteam.UserId);
+                if (savingPlayerId != null && playerId.SteamId == savingPlayerId.Value.SteamId) playerId = new PlayerId(Sync.MyId, playerId.SerialId);
 
-                MyPlayer player = Sync.Players.TryGetPlayerById(playerId);
+                MyPlayer player = Sync.Players.GetPlayerById(playerId);
 
-                if (player != null && controlledEntity != null)
+                if (player != null)
                 {
-                    if (!MySandboxGame.IsDedicated && controlledEntity is IMyControllableEntity)
+                    TryTakeControll(player, controlledEntityIt.Key);
+                }
+            }
+        }
+
+        void TryTakeControll(MyPlayer player, long controlledEntityId)
+        {
+            MyEntity controlledEntity;
+            MyEntities.TryGetEntityById(controlledEntityId, out controlledEntity);
+
+            if (controlledEntity != null)
+            {
+                if (!MySandboxGame.IsDedicated && controlledEntity is IMyControllableEntity)
+                {
+                    player.Controller.TakeControl(controlledEntity as IMyControllableEntity);
+                    MyCharacter character = controlledEntity as MyCharacter;
+
+                    if (character == null)
                     {
-                        player.Controller.TakeControl(controlledEntity as IMyControllableEntity);
-                        if (controlledEntity is MyCharacter)
-                            player.Identity.ChangeCharacter(controlledEntity as MyCharacter);
+
                         if (controlledEntity is MyShipController)
-                            player.Identity.ChangeCharacter((controlledEntity as MyShipController).Pilot);
-                        if (controlledEntity is MyLargeTurretBase)
-                            player.Identity.ChangeCharacter((controlledEntity as MyLargeTurretBase).Pilot);
+                        {
+                            character = (controlledEntity as MyShipController).Pilot;
+                        }
+                        else if (controlledEntity is MyLargeTurretBase)
+                        {
+                            character = (controlledEntity as MyLargeTurretBase).Pilot; ;
+                        }
                     }
-                    else
+
+                    if (character != null)
                     {
-                        m_controlledEntities.Add(controlledEntityIt.Key, playerId, true);
+                        player.Identity.ChangeCharacter(character);
+                        character.SetPlayer(player,false);
                     }
                 }
+                else
+                {
+                    m_controlledEntities.Add(controlledEntityId, player.Id, true);
+                }
+
+                if (player.CachedControllerId != null)
+                {
+                    player.CachedControllerId.Remove(controlledEntityId);
+                    if (player.CachedControllerId.Count == 0)
+                    {
+                        player.CachedControllerId = null;
+                    }
+                }
+            }
+            else
+            {
+                if (player.CachedControllerId == null)
+                {
+                    player.CachedControllerId = new List<long>();
+                }
+
+                player.CachedControllerId.Add(controlledEntityId);
             }
         }
 
         public SerializableDictionaryCompat<long, MyObjectBuilder_Checkpoint.PlayerId, ulong> SerializeControlledEntities()
         {
-            var output = new SerializableDictionaryCompat<long,MyObjectBuilder_Checkpoint.PlayerId,ulong>();
+            var output = new SerializableDictionaryCompat<long, MyObjectBuilder_Checkpoint.PlayerId, ulong>();
 
             foreach (var entry in m_controlledEntities)
             {
@@ -434,7 +489,7 @@ namespace Sandbox.Game.Multiplayer
 
         public void LoadConnectedPlayers(MyObjectBuilder_Checkpoint checkpoint, MyPlayer.PlayerId? savingPlayerId = null)
         {
-            #warning TODO: Probably not needed? If not, remove the method
+#warning TODO: Probably not needed? If not, remove the method
             //long identityId = FindLocalIdentityId(checkpoint);
 
             // Backward compatibility
@@ -452,7 +507,7 @@ namespace Sandbox.Game.Multiplayer
                     var playerId = new PlayerId(playerItem.SteamId, 0);
                     if (savingPlayerId != null && playerId == savingPlayerId)
                     {
-                        playerId = new PlayerId(MySteam.UserId);
+                        playerId = new PlayerId(Sync.MyId);
                         ChangeDisplayNameOfPlayerAndIdentity(playerOb, MySteam.UserName);
                     }
 
@@ -468,7 +523,7 @@ namespace Sandbox.Game.Multiplayer
                     var playerId = new PlayerId(playerItem.Key.ClientId, playerItem.Key.SerialId);
                     if (savingPlayerId != null && playerId == savingPlayerId)
                     {
-                        playerId = new PlayerId(MySteam.UserId);
+                        playerId = new PlayerId(Sync.MyId);
                         ChangeDisplayNameOfPlayerAndIdentity(playerItem.Value, MySteam.UserName);
                     }
 
@@ -479,7 +534,7 @@ namespace Sandbox.Game.Multiplayer
                 foreach (var playerItem in checkpoint.DisconnectedPlayers.Dictionary)
                 {
                     var playerId = new PlayerId(playerItem.Key.ClientId, playerItem.Key.SerialId);
-                    
+
                     var playerOb = new MyObjectBuilder_Player();
                     playerOb.Connected = false;
                     playerOb.IdentityId = playerItem.Value;
@@ -487,7 +542,7 @@ namespace Sandbox.Game.Multiplayer
 
                     if (savingPlayerId != null && playerId == savingPlayerId)
                     {
-                        playerId = new PlayerId(MySteam.UserId);
+                        playerId = new PlayerId(Sync.MyId);
                         ChangeDisplayNameOfPlayerAndIdentity(playerOb, MySteam.UserName);
                     }
 
@@ -501,39 +556,40 @@ namespace Sandbox.Game.Multiplayer
                 foreach (var playerItem in checkpoint.AllPlayersData.Dictionary)
                 {
                     var playerId = new PlayerId(playerItem.Key.ClientId, playerItem.Key.SerialId);
-                    if (savingPlayerId != null && playerId == savingPlayerId)
+                    if (savingPlayerId != null && playerId.SteamId == savingPlayerId.Value.SteamId)
                     {
-                        playerId = new PlayerId(MySteam.UserId);
-                        ChangeDisplayNameOfPlayerAndIdentity(playerItem.Value, MySteam.UserName);
+                        playerId = new PlayerId(Sync.MyId, playerId.SerialId);
+                        if (playerId.SerialId == 0)
+                            ChangeDisplayNameOfPlayerAndIdentity(playerItem.Value, MySteam.UserName);
                     }
 
                     LoadPlayerInternal(ref playerId, playerItem.Value, obsolete: false);
 
-					MyPlayer player = null;
-					if(m_players.TryGetValue(playerId, out player))
-					{
-						List<Vector3> buildColors = null;
-						if(checkpoint.AllPlayersColors != null && checkpoint.AllPlayersColors.Dictionary.TryGetValue(playerItem.Key, out buildColors))
-						{
-							player.SetBuildColorSlots(buildColors);
-						}
-						else if(checkpoint.CharacterToolbar != null && checkpoint.CharacterToolbar.ColorMaskHSVList != null && checkpoint.CharacterToolbar.ColorMaskHSVList.Count > 0) // Backwards compatibility
-						{
-							player.SetBuildColorSlots(checkpoint.CharacterToolbar.ColorMaskHSVList);
-						}
-					}
+                    MyPlayer player = null;
+                    if (m_players.TryGetValue(playerId, out player))
+                    {
+                        List<Vector3> buildColors = null;
+                        if (checkpoint.AllPlayersColors != null && checkpoint.AllPlayersColors.Dictionary.TryGetValue(playerItem.Key, out buildColors))
+                        {
+                            player.SetBuildColorSlots(buildColors);
+                        }
+                        else if (checkpoint.CharacterToolbar != null && checkpoint.CharacterToolbar.ColorMaskHSVList != null && checkpoint.CharacterToolbar.ColorMaskHSVList.Count > 0) // Backwards compatibility
+                        {
+                            player.SetBuildColorSlots(checkpoint.CharacterToolbar.ColorMaskHSVList);
+                        }
+                    }
                 }
             }
 
-			if (MyCubeBuilder.AllPlayersColors != null && checkpoint.AllPlayersColors != null)
-			{
-				foreach(var colorPair in checkpoint.AllPlayersColors.Dictionary)
-				{
-					var playerId = new PlayerId(colorPair.Key.ClientId, colorPair.Key.SerialId);
-					if(!MyCubeBuilder.AllPlayersColors.ContainsKey(playerId))
-						MyCubeBuilder.AllPlayersColors.Add(playerId, colorPair.Value);
-				}
-			}
+            if (MyCubeBuilder.AllPlayersColors != null && checkpoint.AllPlayersColors != null)
+            {
+                foreach (var colorPair in checkpoint.AllPlayersColors.Dictionary)
+                {
+                    var playerId = new PlayerId(colorPair.Key.ClientId, colorPair.Key.SerialId);
+                    if (!MyCubeBuilder.AllPlayersColors.ContainsKey(playerId))
+                        MyCubeBuilder.AllPlayersColors.Add(playerId, colorPair.Value);
+                }
+            }
         }
 
         public void LoadDisconnectedPlayers(Dictionary<MyObjectBuilder_Checkpoint.PlayerId, long> dictionary)
@@ -550,7 +606,7 @@ namespace Sandbox.Game.Multiplayer
             checkpoint.ConnectedPlayers = new SerializableDictionary<MyObjectBuilder_Checkpoint.PlayerId, MyObjectBuilder_Player>();
             checkpoint.DisconnectedPlayers = new SerializableDictionary<MyObjectBuilder_Checkpoint.PlayerId, long>();
             checkpoint.AllPlayersData = new SerializableDictionary<MyObjectBuilder_Checkpoint.PlayerId, MyObjectBuilder_Player>();
-			checkpoint.AllPlayersColors = new SerializableDictionary<MyObjectBuilder_Checkpoint.PlayerId, List<Vector3>>();
+            checkpoint.AllPlayersColors = new SerializableDictionary<MyObjectBuilder_Checkpoint.PlayerId, List<Vector3>>();
 
             foreach (var player in m_players.Values)
             {
@@ -562,30 +618,30 @@ namespace Sandbox.Game.Multiplayer
 
             foreach (var identityPair in m_playerIdentityIds)
             {
-				if (m_players.ContainsKey(identityPair.Key)) continue;
+                if (m_players.ContainsKey(identityPair.Key)) continue;
 
-				var id = new MyObjectBuilder_Checkpoint.PlayerId() { ClientId = identityPair.Key.SteamId, SerialId = identityPair.Key.SerialId };
-				var identity = TryGetIdentity(identityPair.Value);
+                var id = new MyObjectBuilder_Checkpoint.PlayerId() { ClientId = identityPair.Key.SteamId, SerialId = identityPair.Key.SerialId };
+                var identity = TryGetIdentity(identityPair.Value);
                 MyObjectBuilder_Player playerOb = new MyObjectBuilder_Player();
                 playerOb.DisplayName = identity != null ? identity.DisplayName : null;
-				playerOb.IdentityId = identityPair.Value;
+                playerOb.IdentityId = identityPair.Value;
                 playerOb.Connected = false;
-				if(MyCubeBuilder.AllPlayersColors != null)
-					MyCubeBuilder.AllPlayersColors.TryGetValue(identityPair.Key, out playerOb.BuildColorSlots);
+                if (MyCubeBuilder.AllPlayersColors != null)
+                    MyCubeBuilder.AllPlayersColors.TryGetValue(identityPair.Key, out playerOb.BuildColorSlots);
 
                 checkpoint.AllPlayersData.Dictionary.Add(id, playerOb);
             }
 
-			if (MyCubeBuilder.AllPlayersColors != null)
-			{
-				foreach (var colorPair in MyCubeBuilder.AllPlayersColors)
-				{
-					if (m_players.ContainsKey(colorPair.Key) || m_playerIdentityIds.ContainsKey(colorPair.Key)) continue;	// avoid data duplication in saves
+            if (MyCubeBuilder.AllPlayersColors != null)
+            {
+                foreach (var colorPair in MyCubeBuilder.AllPlayersColors)
+                {
+                    if (m_players.ContainsKey(colorPair.Key) || m_playerIdentityIds.ContainsKey(colorPair.Key)) continue;	// avoid data duplication in saves
 
-					var id = new MyObjectBuilder_Checkpoint.PlayerId() { ClientId = colorPair.Key.SteamId, SerialId = colorPair.Key.SerialId };
-					checkpoint.AllPlayersColors.Dictionary.Add(id, colorPair.Value);
-				}
-			}
+                    var id = new MyObjectBuilder_Checkpoint.PlayerId() { ClientId = colorPair.Key.SteamId, SerialId = colorPair.Key.SerialId };
+                    checkpoint.AllPlayersColors.Dictionary.Add(id, colorPair.Value);
+                }
+            }
         }
 
         public List<AllPlayerData> SavePlayers()
@@ -611,13 +667,13 @@ namespace Sandbox.Game.Multiplayer
         private void RemovePlayerFromDictionary(PlayerId playerId)
         {
             m_players.Remove(playerId);
-            OnPlayersChanged(false, playerId.SteamId);
+            OnPlayersChanged(false, playerId);
         }
 
         private void AddPlayer(PlayerId playerId, MyPlayer newPlayer)
         {
             m_players.Add(playerId, newPlayer);
-            OnPlayersChanged(true, playerId.SteamId);
+            OnPlayersChanged(true, playerId);
         }
 
         public void RegisterEvents()
@@ -633,12 +689,12 @@ namespace Sandbox.Game.Multiplayer
             }
         }
 
-        private void OnPlayersChanged(bool added, ulong steamId)
+        private void OnPlayersChanged(bool added, PlayerId playerId)
         {
             var handler = PlayersChanged;
             if (handler != null)
             {
-                handler(added, steamId);
+                handler(added, playerId);
             }
         }
 
@@ -653,46 +709,59 @@ namespace Sandbox.Game.Multiplayer
 
         #region Multiplayer handlers
 
-        static void OnControlChangedRequest(MySyncEntity entity, ref ControlChangedMsg msg, MyNetworkClient sender)
+        static void OnControlChangedRequest(ref ControlChangedMsg msg, MyNetworkClient sender)
         {
+            MyEntity entity = null;
+            if (!MyEntities.TryGetEntityById(msg.EntityId, out entity))
+                return;
+
             PlayerId id = new PlayerId(msg.ClientSteamId, msg.PlayerSerialId);
             MyTrace.Send(TraceWindow.Multiplayer, "OnControlChanged to entity: " + msg.EntityId, id.ToString());
 
-            Sync.Players.SetControlledEntityInternal(id, entity.Entity);
-            
+            Sync.Players.SetControlledEntityInternal(id, entity);
+
             Debug.Assert(sender.SteamUserId == msg.ClientSteamId);
             msg.ClientSteamId = sender.SteamUserId;
 
             Sync.Layer.SendMessageToAll(ref msg, MyTransportMessageEnum.Success);
         }
 
-        static void OnControlChangedSuccess(MySyncEntity entity, ref ControlChangedMsg msg, MyNetworkClient sender)
+        static void OnControlChangedSuccess(ref ControlChangedMsg msg, MyNetworkClient sender)
         {
             PlayerId id = new PlayerId(msg.ClientSteamId, msg.PlayerSerialId);
+            MyEntity entity = null;
+            if (!MyEntities.TryGetEntityById(msg.EntityId, out entity))
+            {
+                m_missingControlledEntities[msg.EntityId] = id;
+                return;
+            }
             MyTrace.Send(TraceWindow.Multiplayer, "OnControlChanged to entity: " + msg.EntityId, id.ToString());
 
-            Sync.Players.SetControlledEntityInternal(id, entity.Entity);
+            Sync.Players.SetControlledEntityInternal(id, entity);
         }
 
-        static void OnCharacterChanged(MySyncEntity entity, ref CharacterChangedMsg msg, MyNetworkClient sender)
+        public static void UpdateControl(long entityId)
         {
-            MyCharacter characterEntity = entity.Entity as MyCharacter;
-            MyEntity controlledEntity;
-            if (!MyEntities.TryGetEntityById(msg.ControlledEntityId, out controlledEntity))
+            MyEntity entity = null;
+            PlayerId playerId;
+
+            if (m_missingControlledEntities.TryGetValue(entityId, out playerId) == false || !MyEntities.TryGetEntityById(entityId, out entity))
             {
-                MySandboxGame.Log.WriteLine("Controlled entity not found");
-                Debug.Fail("Controlled entity not found");
+                return;
             }
 
-            PlayerId id = new PlayerId(msg.ClientSteamId, msg.PlayerSerialId);
-            MyPlayer player = Sync.Players.TryGetPlayerById(id);
+            MyTrace.Send(TraceWindow.Multiplayer, "OnControlChanged to entity: " + entityId, playerId.ToString());
 
-            ChangePlayerCharacterInternal(player, characterEntity, controlledEntity);
+            Sync.Players.SetControlledEntityInternal(playerId, entity);
         }
 
-        static void OnControlReleased(MySyncEntity entity, ref ControlReleasedMsg msg, MyNetworkClient sender)
+        static void OnControlReleased(ref ControlReleasedMsg msg, MyNetworkClient sender)
         {
-            Sync.Players.RemoveControlledEntityInternal(entity.Entity);
+            MyEntity entity = null;
+            if (!MyEntities.TryGetEntityById(msg.EntityId, out entity))
+                return;
+
+            Sync.Players.RemoveControlledEntityInternal(entity);
 
             if (Sync.IsServer)
             {
@@ -702,9 +771,32 @@ namespace Sandbox.Game.Multiplayer
 
         static void OnIdentityCreated(ref IdentityCreatedMsg msg, MyNetworkClient sender)
         {
-            var identity = Sync.Players.CreateNewIdentity(msg.DisplayName, msg.IdentityId, model: null);
             if (msg.IsNPC)
-                Sync.Players.MarkIdentityAsNPC(identity.IdentityId);
+            {
+                Sync.Players.CreateNewNpcIdentity(msg.DisplayName);
+            }
+            else
+            {
+                Sync.Players.CreateNewIdentity(msg.DisplayName, msg.IdentityId, model: null);
+            }
+        }
+
+        static void OnIdentityRemoved(ref IdentityRemovedMsg msg, MyNetworkClient sender)
+        {
+            if (Sync.IsServer)
+            {
+                Debug.Assert(msg.SteamId == sender.SteamUserId, "A client was requesting identity removal for a different client!");
+                if (msg.SteamId != sender.SteamUserId) return;
+
+                if (Sync.Players.RemoveIdentityInternal(msg.IdentityId, new PlayerId(msg.SteamId, msg.SerialId)))
+                {
+                    Sync.Layer.SendMessageToAll(ref msg, MyTransportMessageEnum.Success);
+                }
+            }
+            else
+            {
+                Sync.Players.RemoveIdentityInternal(msg.IdentityId, new PlayerId(msg.SteamId, msg.SerialId));
+            }
         }
 
         static void OnPlayerIdentityChanged(ref PlayerIdentityChangedMsg msg, MyNetworkClient sender)
@@ -712,7 +804,7 @@ namespace Sandbox.Game.Multiplayer
             Debug.Assert(!Sync.IsServer);
 
             var playerId = new PlayerId(msg.ClientSteamId, msg.PlayerSerialId);
-            var player = Sync.Players.TryGetPlayerById(playerId);
+            var player = Sync.Players.GetPlayerById(playerId);
 
             Debug.Assert(player != null, "Changing identity of an unknown or unconnected player!");
             if (player == null) return;
@@ -773,7 +865,7 @@ namespace Sandbox.Game.Multiplayer
                     Sync.Layer.SendMessage(ref failMsg, sender.SteamUserId, MyTransportMessageEnum.Failure);
                     return;
                 }
-            } 
+            }
 
             var identity = Sync.Players.TryGetPlayerIdentity(playerId);
             if (identity == null)
@@ -792,7 +884,7 @@ namespace Sandbox.Game.Multiplayer
 
         static void OnNewPlayerSuccess(ref NewPlayerSuccessMsg msg, MyNetworkClient sender)
         {
-            var localHumanPlayerId = new MyPlayer.PlayerId(MySteam.UserId, 0);
+            var localHumanPlayerId = new MyPlayer.PlayerId(Sync.MyId, 0);
             var playerId = new MyPlayer.PlayerId(msg.ClientSteamId, msg.PlayerSerialId);
             if (playerId == localHumanPlayerId && (!MyFakes.ENABLE_BATTLE_SYSTEM || !MySession.Static.Battle))
             {
@@ -807,7 +899,7 @@ namespace Sandbox.Game.Multiplayer
 
         static void OnNewPlayerFailure(ref NewPlayerFailureMsg msg, MyNetworkClient sender)
         {
-            if (msg.ClientSteamId != MySteam.UserId)
+            if (msg.ClientSteamId != Sync.MyId)
             {
                 Debug.Assert(false, "Your SteamId differs from message steam id");
                 return;
@@ -829,51 +921,15 @@ namespace Sandbox.Game.Multiplayer
             MyNetworkClient client = null;
             Sync.Clients.TryGetClient(msg.ClientSteamId, out client);
             Debug.Assert(client != null, "Could not find client of the new player!");
-			if (client == null) return;
+            if (client == null) return;
 
             var playerId = new MyPlayer.PlayerId(msg.ClientSteamId, msg.PlayerSerialId);
-			var playerBuilder = new MyObjectBuilder_Player();
-			playerBuilder.DisplayName = msg.DisplayName;
-			playerBuilder.IdentityId = msg.IdentityId;
-			playerBuilder.BuildColorSlots = msg.BuildColors;
+            var playerBuilder = new MyObjectBuilder_Player();
+            playerBuilder.DisplayName = msg.DisplayName;
+            playerBuilder.IdentityId = msg.IdentityId;
+            playerBuilder.BuildColorSlots = msg.BuildColors;
 
             Sync.Players.CreateNewPlayerInternal(client, playerId, playerBuilder);
-        }
-
-        static void OnAll_Identities_Players_Factions_Request(ref All_Identities_Players_Factions_RequestMsg msg, MyNetworkClient sender)
-        {
-            Debug.Assert(Sync.IsServer);
-
-            var response = new All_Identities_Players_Factions_SuccessMsg();
-            response.Identities = Sync.Players.SaveIdentities();
-            response.Players = Sync.Players.SavePlayers();
-            response.Factions = MySession.Static.Factions.SaveFactions();
-
-            Sync.Layer.SendMessage(ref response, sender.SteamUserId, messageType: MyTransportMessageEnum.Success);
-        }
-
-        static void OnAll_Identities_Players_Factions_Success(ref All_Identities_Players_Factions_SuccessMsg msg, MyNetworkClient sender)
-        {
-            Debug.Assert(!Sync.IsServer);
-           // Multiplayer client must setup clients
-            if ((MyMultiplayer.Static is MyMultiplayerClient) && msg.Players != null)
-            {
-                foreach (var player in msg.Players)
-                {
-                    if (!Sync.Clients.HasClient(player.SteamId))
-                        Sync.Clients.AddClient(player.SteamId);
-                }
-            }
-            Sync.Players.m_allIdentities.Clear();
-            Sync.Players.m_npcIdentities.Clear();
-            Sync.Players.LoadIdentities(msg.Identities);
-
-            Sync.Players.m_players.Clear();
-            Sync.Players.m_controlledEntities.Clear();
-            Sync.Players.m_playerIdentityIds.Clear();
-            Sync.Players.LoadPlayers(msg.Players);
-
-            MySession.Static.Factions.LoadFactions(msg.Factions, true);
         }
 
         static void OnPlayerRemoveRequest(ref PlayerRemoveMsg msg, MyNetworkClient sender)
@@ -881,11 +937,11 @@ namespace Sandbox.Game.Multiplayer
             Debug.Assert(msg.ClientSteamId == sender.SteamUserId, "A client requests removal of different client's player. That's not allowed!");
             if (msg.ClientSteamId != sender.SteamUserId) return;
 
-            var player = Sync.Players.TryGetPlayerById(new PlayerId(msg.ClientSteamId, msg.PlayerSerialId));
+            var player = Sync.Players.GetPlayerById(new PlayerId(msg.ClientSteamId, msg.PlayerSerialId));
             Debug.Assert(player != null, "Could not find a player to remove!");
             if (player == null) return;
 
-            Sync.Players.RemovePlayer(player);
+            Sync.Players.RemovePlayer(player, msg.RemoveCharacter);
         }
 
         static void OnPlayerRemoved(ref PlayerRemoveMsg msg, MyNetworkClient sender)
@@ -899,81 +955,120 @@ namespace Sandbox.Game.Multiplayer
             Sync.Players.RemovePlayerFromDictionary(playerId);
         }
 
-		static void OnPlayerColorChangedRequest(ref PlayerChangeColorMsg msg, MyNetworkClient sender)
-		{
-			PlayerId playerId = new PlayerId(sender.SteamUserId, msg.SerialId);
-			var player = Sync.Players.TryGetPlayerById(playerId);
-			if(player == null)
-			{
-				List<Vector3> colors;
-				if (!MyCubeBuilder.AllPlayersColors.TryGetValue(playerId, out colors))
-					return;
+        static void OnPlayerColorChangedRequest(ref PlayerChangeColorMsg msg, MyNetworkClient sender)
+        {
+            PlayerId playerId = new PlayerId(sender.SteamUserId, msg.SerialId);
+            var player = Sync.Players.GetPlayerById(playerId);
+            if (player == null)
+            {
+                List<Vector3> colors;
+                if (!MyCubeBuilder.AllPlayersColors.TryGetValue(playerId, out colors))
+                    return;
 
-				colors[msg.ColorIndex] = msg.NewColor;
-				return;
-			}
+                colors[msg.ColorIndex] = msg.NewColor;
+                return;
+            }
 
-			player.SelectedBuildColorSlot = msg.ColorIndex;
-			player.ChangeOrSwitchToColor(msg.NewColor);
-		}
+            player.SelectedBuildColorSlot = msg.ColorIndex;
+            player.ChangeOrSwitchToColor(msg.NewColor);
+        }
 
-		static void OnPlayerColorsChangedRequest(ref PlayerChangeColorsMsg msg, MyNetworkClient sender)
-		{
-			PlayerId playerId = new PlayerId(sender.SteamUserId, msg.SerialId);
-			var player = Sync.Players.TryGetPlayerById(playerId);
-			if (player == null)
-			{
-				List<Vector3> colors;
-				if (!MyCubeBuilder.AllPlayersColors.TryGetValue(playerId, out colors))
-					return;
+        static void OnPlayerColorsChangedRequest(ref PlayerChangeColorsMsg msg, MyNetworkClient sender)
+        {
+            PlayerId playerId = new PlayerId(sender.SteamUserId, msg.SerialId);
+            var player = Sync.Players.GetPlayerById(playerId);
+            if (player == null)
+            {
+                List<Vector3> colors;
+                if (!MyCubeBuilder.AllPlayersColors.TryGetValue(playerId, out colors))
+                    return;
 
-				colors.Clear();
-				foreach(var color in msg.NewColors)
-				{
-					colors.Add(color);
-				}
-				
-				return;
-			}
+                colors.Clear();
+                foreach (var color in msg.NewColors)
+                {
+                    colors.Add(color);
+                }
 
-			player.SetBuildColorSlots(msg.NewColors);
-		}
+                return;
+            }
+
+            player.SetBuildColorSlots(msg.NewColors);
+        }
+
+        static void OnNpcIdentityRequest(ref NewNpcIdentityMsg msg, MyNetworkClient sender)
+        {
+            string npcName = "NPC " + MyRandom.Instance.Next(1000, 9999);
+            var identity = Sync.Players.CreateNewNpcIdentity(npcName);
+
+            if (identity != null)
+            {
+                msg.IdentityId = identity.IdentityId;
+                Sync.Layer.SendMessage(ref msg, sender.SteamUserId, MyTransportMessageEnum.Success);
+            }
+        }
+
+        static void OnNpcIdentitySuccess(ref NewNpcIdentityMsg msg, MyNetworkClient sender)
+        {
+            var identity = Sync.Players.TryGetIdentity(msg.IdentityId);
+            Debug.Assert(identity != null, "Server told me identity was created, but I cannot find it!");
+            if (identity == null) return;
+
+            MyGuiSandbox.AddScreen(MyGuiSandbox.CreateMessageBox(
+                buttonType: MyMessageBoxButtonsType.OK,
+                messageCaption: MyTexts.Get(MyCommonTexts.MessageBoxCaptionInfo),
+                messageText: new StringBuilder().AppendFormat(MyTexts.GetString(MyCommonTexts.NPCIdentityAdded), identity.DisplayName)));
+        }
+
+        static void OnIdentityFirstSpawn(ref IdentityFirstSpawnMsg msg, MyNetworkClient sender)
+        {
+            var identity = Sync.Players.TryGetIdentity(msg.IdentityId);
+            Debug.Assert(identity != null, "Server told me identity was spawned the first time, but I cannot find it!");
+            if (identity == null) return;
+
+            identity.PerformFirstSpawn();
+        }
 
         #endregion
 
         #region Public methods
 
-		public void RequestPlayerColorChanged(int playerSerialId, int colorIndex, Vector3 newColor)
-		{
-			PlayerChangeColorMsg msg = new PlayerChangeColorMsg()
-			{
-				SerialId = playerSerialId,
-				ColorIndex = colorIndex,
-				NewColor = newColor,
-			};
+        public void RequestPlayerColorChanged(int playerSerialId, int colorIndex, Vector3 newColor)
+        {
+            PlayerChangeColorMsg msg = new PlayerChangeColorMsg()
+            {
+                SerialId = playerSerialId,
+                ColorIndex = colorIndex,
+                NewColor = newColor,
+            };
 
-			Sync.Layer.SendMessageToServer(ref msg, MyTransportMessageEnum.Request);
-		}
+            Sync.Layer.SendMessageToServer(ref msg, MyTransportMessageEnum.Request);
+        }
 
-		public void RequestPlayerColorsChanged(int playerSerialId, List<Vector3> newColors)
-		{
-			PlayerChangeColorsMsg msg = new PlayerChangeColorsMsg()
-			{
-				SerialId = playerSerialId,
-				NewColors = newColors,
-			};
+        public void RequestPlayerColorsChanged(int playerSerialId, List<Vector3> newColors)
+        {
+            PlayerChangeColorsMsg msg = new PlayerChangeColorsMsg()
+            {
+                SerialId = playerSerialId,
+                NewColors = newColors,
+            };
 
-			Sync.Layer.SendMessageToServer(ref msg, MyTransportMessageEnum.Request);
-		}
+            Sync.Layer.SendMessageToServer(ref msg, MyTransportMessageEnum.Request);
+        }
 
         public void RequestNewPlayer(int serialNumber, string playerName, string characterModel)
         {
             var msg = new NewPlayerRequestMsg();
-            msg.ClientSteamId = MySteam.UserId;
+            msg.ClientSteamId = Sync.MyId;
             msg.PlayerSerialId = serialNumber;
             msg.DisplayName = playerName;
             msg.CharacterModel = characterModel;
 
+            Sync.Layer.SendMessageToServer(ref msg);
+        }
+
+        public void RequestNewNpcIdentity()
+        {
+            var msg = new NewNpcIdentityMsg();
             Sync.Layer.SendMessageToServer(ref msg);
         }
 
@@ -984,9 +1079,9 @@ namespace Sandbox.Game.Multiplayer
             // TODO: Limit number of players per client
             var playerId = FindFreePlayerId(steamClient.SteamUserId);
 
-			var playerBuilder = new MyObjectBuilder_Player();
-			playerBuilder.DisplayName = playerName;
-			playerBuilder.IdentityId = identity.IdentityId;
+            var playerBuilder = new MyObjectBuilder_Player();
+            playerBuilder.DisplayName = playerName;
+            playerBuilder.IdentityId = identity.IdentityId;
 
             return CreateNewPlayerInternal(steamClient, playerId, playerBuilder);
         }
@@ -1000,9 +1095,9 @@ namespace Sandbox.Game.Multiplayer
             Debug.Assert(steamClient != null, "Could not find a client for the new player!");
             if (steamClient == null) return null;
 
-			var playerBuilder = new MyObjectBuilder_Player();
-			playerBuilder.DisplayName = playerName;
-			playerBuilder.IdentityId = identity.IdentityId;
+            var playerBuilder = new MyObjectBuilder_Player();
+            playerBuilder.DisplayName = playerName;
+            playerBuilder.IdentityId = identity.IdentityId;
 
             var player = CreateNewPlayerInternal(steamClient, id, playerBuilder);
             if (player != null)
@@ -1012,9 +1107,9 @@ namespace Sandbox.Game.Multiplayer
                 msg.PlayerSerialId = id.SerialId;
                 msg.IdentityId = identity.IdentityId;
                 msg.DisplayName = playerName;
-				msg.BuildColors = null;
-				if (!MyPlayer.IsColorsSetToDefaults(player.BuildColorSlots))
-					msg.BuildColors = player.BuildColorSlots;
+                msg.BuildColors = null;
+                if (!MyPlayer.IsColorsSetToDefaults(player.BuildColorSlots))
+                    msg.BuildColors = player.BuildColorSlots;
 
                 Sync.Layer.SendMessageToAll(ref msg, MyTransportMessageEnum.Success);
             }
@@ -1032,24 +1127,11 @@ namespace Sandbox.Game.Multiplayer
             return playerInstance;
         }
 
-        public void RemovePlayer(MyPlayer player)
+        public void RemovePlayer(MyPlayer player, bool removeCharacter = true)
         {
             if (Sync.IsServer)
             {
-                if (player.Controller.ControlledEntity != null)
-                {
-                    foreach (var controlEntry in m_controlledEntities)
-                    {
-                        if (controlEntry.Value != player.Id) continue;
-                        if (controlEntry.Key == player.Controller.ControlledEntity.Entity.EntityId) continue;
-
-                        m_controlledEntities.Remove(controlEntry.Key);
-                    }
-                    m_controlledEntities.ApplyRemovals();
-                    player.Controller.TakeControl(null);
-                }
-
-                if (player.Character != null)
+                if (removeCharacter && player.Character != null)
                 {
                     //Dont remove character if he's sleeping in a cryo chamber
                     if (!(player.Character.Parent is Sandbox.Game.Entities.Blocks.MyCryoChamber))
@@ -1061,7 +1143,7 @@ namespace Sandbox.Game.Multiplayer
                 KillPlayer(player);
 
                 if (player.IsLocalPlayer)
-                   RaiseLocalPlayerRemoved(player.Id.SerialId);
+                    RaiseLocalPlayerRemoved(player.Id.SerialId);
                 if (PlayerRemoved != null)
                     PlayerRemoved(player.Id);
 
@@ -1082,24 +1164,21 @@ namespace Sandbox.Game.Multiplayer
                 var msg = new PlayerRemoveMsg();
                 msg.ClientSteamId = player.Id.SteamId;
                 msg.PlayerSerialId = player.Id.SerialId;
+                msg.RemoveCharacter = removeCharacter;
                 Sync.Layer.SendMessageToServer(ref msg, MyTransportMessageEnum.Request);
             }
         }
 
-        public MyPlayer TryGetPlayerById(PlayerId id)
+        public MyPlayer GetPlayerById(PlayerId id)
         {
             MyPlayer player = null;
             m_players.TryGetValue(id, out player);
             return player;
         }
 
-        public void RequestAll_Identities_Players_Factions()
+        public bool TryGetPlayerById(PlayerId id, out MyPlayer player)
         {
-            var msg = new All_Identities_Players_Factions_RequestMsg();
-            msg.ClientSteamId = MySteam.UserId;
-            msg.PlayerSerialId = 0;
-
-            Sync.Layer.SendMessageToServer(ref msg);
+            return m_players.TryGetValue(id, out player);
         }
 
         public bool TrySetControlledEntity(PlayerId id, MyEntity entity)
@@ -1123,6 +1202,11 @@ namespace Sandbox.Game.Multiplayer
         {
             PlayerId id = new PlayerId(steamUserId);
             SetControlledEntity(id, entity);
+        }
+
+        public void SetControlledEntityLocally(PlayerId id, MyEntity entity)
+        {
+            SetControlledEntityInternal(id, entity);
         }
 
         public void SetControlledEntity(PlayerId id, MyEntity entity)
@@ -1166,21 +1250,26 @@ namespace Sandbox.Game.Multiplayer
             }
         }
 
-        public void SetPlayerCharacter(MyPlayer player, MyCharacter newCharacter, MyEntity controlledEntity = null)
+        public void SetPlayerToCockpit(MyPlayer player, MyEntity controlledEntity)
+        {
+            Sync.Players.SetControlledEntityInternal(player.Id, controlledEntity);
+
+            if (player == MySession.Static.LocalHumanPlayer)
+                MySession.Static.SetCameraController(MyCameraControllerEnum.Entity, MySession.Static.LocalCharacter);
+        }
+
+        public void SetPlayerCharacter(MyPlayer player, MyCharacter newCharacter, MyEntity spawnedBy)
         {
             Debug.Assert(Sync.IsServer, "SetPlayerCharacter can be only called on the server!");
 
-            if (controlledEntity == null) controlledEntity = newCharacter;
+            newCharacter.SetPlayer(player);
 
-            ChangePlayerCharacterInternal(player, newCharacter, controlledEntity);
-
-            var msg = new CharacterChangedMsg();
-            msg.ClientSteamId = player.Id.SteamId;
-            msg.PlayerSerialId = player.Id.SerialId;
-            msg.CharacterEntityId = newCharacter.EntityId;
-            msg.ControlledEntityId = controlledEntity.EntityId;
-
-            Sync.Layer.SendMessageToAll(ref msg);
+            if(spawnedBy != null)
+            {
+                long relatedEntity = spawnedBy.EntityId;
+                Vector3 relativePosition = (newCharacter.WorldMatrix * MatrixD.Invert(spawnedBy.WorldMatrix)).Translation;
+               MyMultiplayer.RaiseEvent(newCharacter, x => x.SpawCharacterRelative, relatedEntity, relativePosition);   
+            }           
         }
 
         public MyPlayer GetControllingPlayer(MyEntity entity)
@@ -1219,6 +1308,17 @@ namespace Sandbox.Game.Multiplayer
         public Dictionary<PlayerId, long>.KeyCollection GetAllPlayers()
         {
             return m_playerIdentityIds.Keys;
+        }
+
+        public void UpdatePlayerControllers(long controllerId)
+        {
+            foreach (var player in m_players)
+            {
+                if (player.Value.CachedControllerId != null && player.Value.CachedControllerId.Contains(controllerId))
+                {
+                    TryTakeControll(player.Value, controllerId);
+                }
+            }
         }
 
         #endregion
@@ -1309,6 +1409,13 @@ namespace Sandbox.Game.Multiplayer
 
         #region Identities
 
+        public MyIdentity CreateNewNpcIdentity(string name)
+        {
+            MyIdentity identity = base.CreateNewIdentity(name, null);
+            AfterCreateIdentity(identity, true);
+            return identity;
+        }
+
         public override MyIdentity CreateNewIdentity(string name, string model = null)
         {
             MyIdentity identity = base.CreateNewIdentity(name, model);
@@ -1338,6 +1445,28 @@ namespace Sandbox.Game.Multiplayer
             MyIdentity identity = base.CreateNewIdentity(objectBuilder);
             AfterCreateIdentity(identity, obsoleteNpc);
             return identity;
+        }
+
+        public void RemoveIdentity(long identityId, PlayerId playerId = new PlayerId())
+        {
+            if (Sync.IsServer)
+            {
+                if (!RemoveIdentityInternal(identityId, playerId)) return;
+            }
+
+            var msg = new IdentityRemovedMsg();
+            msg.IdentityId = identityId;
+            msg.SteamId = playerId.SteamId;
+            msg.SerialId = playerId.SerialId;
+
+            if (Sync.IsServer)
+            {
+                Sync.Layer.SendMessageToAll(ref msg, MyTransportMessageEnum.Success);
+            }
+            else
+            {
+                Sync.Layer.SendMessageToServer(ref msg, MyTransportMessageEnum.Request);
+            }
         }
 
         public bool HasIdentity(long identityId)
@@ -1404,12 +1533,23 @@ namespace Sandbox.Game.Multiplayer
             Debug.Assert(MyEntityIdentifier.GetIdObjectType(identityId) == MyEntityIdentifier.ID_OBJECT_TYPE.IDENTITY, "Invalid identity ID!");
             Debug.Assert(m_npcIdentities.Contains(identityId), "Identity is not an NPC!");
 
-            m_npcIdentities.Remove(identityId);   
+            m_npcIdentities.Remove(identityId);
         }
 
         public bool IdentityIsNpc(long identityId)
         {
             return m_npcIdentities.Contains(identityId);
+        }
+
+        public void LoadIdentities(List<MyObjectBuilder_Identity> list)
+        {
+            if (list == null)
+                return;
+
+            foreach (var objectBuilder in list)
+            {
+                var identity = CreateNewIdentity(objectBuilder);
+            }
         }
 
         public void ClearIdentities()
@@ -1443,15 +1583,16 @@ namespace Sandbox.Game.Multiplayer
                 handler();
         }
 
-        public static void RespawnRequest(bool joinGame, bool newPlayer, long medicalId, string shipPrefabId, int playerSerialId = 0, Vector3D? spawnPosition = null)
+        public static void RespawnRequest(bool joinGame, bool newPlayer, long respawnEntityId, string shipPrefabId, int playerSerialId = 0, Vector3D? spawnPosition = null, VRage.ObjectBuilders.SerializableDefinitionId? botDefinitionId = null)
         {
             var msg = new RespawnMsg();
             msg.JoinGame = joinGame;
-            msg.MedicalRoom = medicalId;
+            msg.RespawnEntityId = respawnEntityId;
             msg.NewIdentity = newPlayer;
             msg.RespawnShipId = shipPrefabId;
             msg.PlayerSerialId = playerSerialId;
             msg.SpawnPosition = spawnPosition;
+            msg.BotDefinitionId = botDefinitionId;
 
             MySession.Static.SyncLayer.SendMessageToServer(ref msg, Engine.Multiplayer.MyTransportMessageEnum.Request);
         }
@@ -1478,8 +1619,12 @@ namespace Sandbox.Game.Multiplayer
 
             if (Sync.IsServer)
             {
-                player.Identity.SetDead(resetIdentity);
-                Sync.Layer.SendMessageToAll(ref msg, MyTransportMessageEnum.Success);
+                // CH: This was here before and I think it's wrong! :-)
+                //player.Identity.SetDead(resetIdentity);
+                if (SetPlayerDeadInternal(player.Id.SteamId, player.Id.SerialId, deadState, resetIdentity))
+                {
+                    Sync.Layer.SendMessageToAll(ref msg, MyTransportMessageEnum.Success);
+                }
             }
             else
                 Sync.Layer.SendMessageToServer(ref msg, MyTransportMessageEnum.Request);
@@ -1488,8 +1633,8 @@ namespace Sandbox.Game.Multiplayer
         private bool SetPlayerDeadInternal(ulong playerSteamId, int playerSerialId, bool deadState, bool resetIdentity)
         {
             PlayerId id = new PlayerId(playerSteamId, playerSerialId);
-            var player = Sync.Players.TryGetPlayerById(id);
-            Debug.Assert(player != null, "Could not find player "+id);
+            var player = Sync.Players.GetPlayerById(id);
+            Debug.Assert(player != null, "Could not find player " + id);
             if (player == null) return false;
 
             Debug.Assert(player.Identity != null, "Setting dead state of an uncontrolled identity!");
@@ -1499,9 +1644,7 @@ namespace Sandbox.Game.Multiplayer
 
             if (deadState == true)
             {
-                if (player == Sync.Clients.LocalClient.FirstPlayer)
-                    MyPlayerCollection.RequestLocalRespawn();
-
+                // First remove control from the player
                 player.Controller.TakeControl(null);
 
                 foreach (var entry in m_controlledEntities)
@@ -1517,6 +1660,11 @@ namespace Sandbox.Game.Multiplayer
                     }
                 }
                 m_controlledEntities.ApplyRemovals();
+
+                // Than respawn him with new control.
+                if (player == Sync.Clients.LocalClient.FirstPlayer)
+                    MyPlayerCollection.RequestLocalRespawn();
+
             }
 
             return true;
@@ -1524,22 +1672,37 @@ namespace Sandbox.Game.Multiplayer
 
         static void OnRespawnRequest(ref RespawnMsg msg, MyNetworkClient sender)
         {
+            Debug.Assert(Sync.IsServer, "This method can only be called on the server!");
             Debug.Assert(Sync.Players.RespawnComponent != null, "The respawn component is not set! Cannot handle respawn request!");
             if (Sync.Players.RespawnComponent == null)
             {
                 return;
             }
 
+            PlayerId playerId = new PlayerId(sender.SteamUserId, msg.PlayerSerialId);
+
             bool respawnSuccessful = Sync.Players.RespawnComponent.HandleRespawnRequest(
                 msg.JoinGame,
                 msg.NewIdentity,
-                msg.MedicalRoom,
+                msg.RespawnEntityId,
                 msg.RespawnShipId,
-                new PlayerId(sender.SteamUserId, msg.PlayerSerialId),
-                msg.SpawnPosition
+                playerId,
+                msg.SpawnPosition,
+                msg.BotDefinitionId
             );
 
-            if (!respawnSuccessful)
+            if (respawnSuccessful)
+            {
+                MyIdentity identity = Sync.Players.TryGetPlayerIdentity(playerId);
+                Debug.Assert(identity != null, "Could not find identity of respawning player!");
+                if (identity != null && !identity.FirstSpawnDone)
+                {
+                    var identitySpawnedMsg = new IdentityFirstSpawnMsg() { IdentityId = identity.IdentityId };
+                    MySession.Static.SyncLayer.SendMessageToAll(ref identitySpawnedMsg, MyTransportMessageEnum.Success);
+                    identity.PerformFirstSpawn();
+                }
+            }
+            else
             {
                 MySession.Static.SyncLayer.SendMessage(ref msg, sender.SteamUserId, MyTransportMessageEnum.Failure);
             }
@@ -1556,26 +1719,31 @@ namespace Sandbox.Game.Multiplayer
                 m_playerIdentityIds.Add(playerId, playerBuilder.IdentityId);
             }
 
-            MyPlayer newPlayer = new MyPlayer(steamClient, playerId);
-			newPlayer.Init(playerBuilder);
+            MyPlayer newPlayer = GetPlayerById(playerId);
+            if (newPlayer == null)
+            {
+                newPlayer = new MyPlayer(steamClient, playerId);
+                newPlayer.Init(playerBuilder);
 
-            newPlayer.IdentityChanged += player_IdentityChanged;
-            newPlayer.Controller.ControlledEntityChanged += controller_ControlledEntityChanged;
+                newPlayer.IdentityChanged += player_IdentityChanged;
+                newPlayer.Controller.ControlledEntityChanged += controller_ControlledEntityChanged;
 
-            AddPlayer(playerId, newPlayer);
+                AddPlayer(playerId, newPlayer);
 
-            if (MyFakes.ENABLE_MISSION_TRIGGERS && MySessionComponentMissionTriggers.Static!=null)
-                MySessionComponentMissionTriggers.Static.TryCreateFromDefault(playerId);
+                if (MyFakes.ENABLE_MISSION_TRIGGERS && MySessionComponentMissionTriggers.Static != null)
+                    MySessionComponentMissionTriggers.Static.TryCreateFromDefault(playerId);
 
+            }
             return newPlayer;
         }
 
-        private static void ChangePlayerCharacterInternal(MyPlayer player, MyCharacter characterEntity, MyEntity entity)
+        public static void ChangePlayerCharacter(MyPlayer player, MyCharacter characterEntity, MyEntity entity)
         {
             if (player == null)
             {
                 MySandboxGame.Log.WriteLine("Player not found");
                 Debug.Fail("Player not found");
+                return; // hotfix, crashing on mptest DS
             }
 
             if (player.Identity == null)
@@ -1589,14 +1757,15 @@ namespace Sandbox.Game.Multiplayer
             player.Identity.ChangeCharacter(characterEntity);
             Sync.Players.SetControlledEntityInternal(player.Id, entity);
 
-            if (player == MySession.LocalHumanPlayer)
-                MySession.SetCameraController(MyCameraControllerEnum.Entity, MySession.LocalCharacter);
+            if (player == MySession.Static.LocalHumanPlayer)
+                MySession.Static.SetCameraController(MySession.Static.LocalCharacter.IsInFirstPersonView ? MyCameraControllerEnum.Entity : MyCameraControllerEnum.ThirdPersonSpectator,
+                    MySession.Static.LocalCharacter);
         }
 
         private void SetControlledEntityInternal(PlayerId id, MyEntity entity)
         {
             Debug.Assert(
-                Sync.Players.TryGetPlayerById(id) == null || Sync.Players.TryGetPlayerById(id).Controller.ControlledEntity != entity,
+                Sync.Players.GetPlayerById(id) == null || Sync.Players.GetPlayerById(id).Controller.ControlledEntity != entity,
                 "Setting the controlled entity to the same value. Is that what you wanted?");
 
             RemoveControlledEntityInternal(entity);
@@ -1604,12 +1773,12 @@ namespace Sandbox.Game.Multiplayer
             entity.OnClosing += m_entityClosingHandler;
 
             // TakeControl will take care of setting controlled entity into m_controlledEntities
-            var player = Sync.Players.TryGetPlayerById(id);
-            if (player != null && entity is IMyControllableEntity)
+            var player = Sync.Players.GetPlayerById(id);
+            if (player != null && player.Controller != null && entity is IMyControllableEntity)
             {
                 player.Controller.TakeControl((IMyControllableEntity)entity);
             }
-            else
+            else if (player != null)
             {
                 m_controlledEntities.Add(entity.EntityId, player.Id, immediate: true);
             }
@@ -1679,30 +1848,33 @@ namespace Sandbox.Game.Multiplayer
                 handler(serialId);
         }
 
-        private bool RemoveIdentityInternal(PlayerId id, long identityId)
+        private bool RemoveIdentityInternal(long identityId, PlayerId playerId)
         {
             Debug.Assert(m_allIdentities.ContainsKey(identityId), "Identity could not be found");
-            Debug.Assert(m_playerIdentityIds.ContainsKey(id), "Identity could not be found");
-            Debug.Assert(!m_players.ContainsKey(id), "Cannot remove identity of active player");
-            if (m_players.ContainsKey(id))
-                return false;
+            Debug.Assert(!playerId.IsValid || !m_players.ContainsKey(playerId), "Cannot remove identity of active player!");
+            if (playerId.IsValid && m_players.ContainsKey(playerId)) return false;
 
             MyIdentity identity;
             if (m_allIdentities.TryGetValue(identityId, out identity))
             {
+                identity.ChangeCharacter(null);
                 identity.CharacterChanged -= Identity_CharacterChanged;
-                if (identity.Character != null)
-                {
-                    identity.Character.CharacterDied -= Character_CharacterDied;
-                }
             }
 
             m_allIdentities.Remove(identityId);
-            m_playerIdentityIds.Remove(id);
+            m_npcIdentities.Remove(identityId);
+            if (playerId.IsValid)
+            {
+                m_playerIdentityIds.Remove(playerId);
+            }
+
+            var handler = IdentitiesChanged;
+            if (handler != null) handler();
+
             return true;
         }
 
-        private void LoadIdentitiesObsolete(List<Sandbox.Common.ObjectBuilders.MyObjectBuilder_Checkpoint.PlayerItem> playersFromSession, MyPlayer.PlayerId? savingPlayerId = null)
+        private void LoadIdentitiesObsolete(List<MyObjectBuilder_Checkpoint.PlayerItem> playersFromSession, MyPlayer.PlayerId? savingPlayerId = null)
         {
             foreach (var entry in playersFromSession)
             {
@@ -1710,7 +1882,7 @@ namespace Sandbox.Game.Multiplayer
                 var playerId = new PlayerId(entry.SteamId);
 
                 // If savingPlayerId matches, we replace the identity player ID with the local player
-                if (savingPlayerId != null && playerId == savingPlayerId.Value) playerId = new PlayerId(MySteam.UserId);
+                if (savingPlayerId != null && playerId == savingPlayerId.Value) playerId = new PlayerId(Sync.MyId);
 
                 if (!entry.IsDead)
                 {
@@ -1719,15 +1891,6 @@ namespace Sandbox.Game.Multiplayer
                     m_playerIdentityIds.Add(playerId, identity.IdentityId);
                     identity.SetDead(false);
                 }
-            }
-        }
-
-        public void LoadIdentities(List<MyObjectBuilder_Identity> list)
-        {
-			if (list == null)
-                return;            foreach (var objectBuilder in list)
-            {
-                var identity = CreateNewIdentity(objectBuilder);
             }
         }
 
@@ -1756,15 +1919,18 @@ namespace Sandbox.Game.Multiplayer
 
                 Sync.Layer.SendMessageToAll(ref msg);
             }
+
+            var handler = IdentitiesChanged;
+            if (handler != null) handler();
         }
 
-        void Character_CharacterDied(MyCharacter diedCharacter)
+        private void Character_CharacterDied(MyCharacter diedCharacter)
         {
             if (PlayerCharacterDied != null && diedCharacter != null && diedCharacter.ControllerInfo.ControllingIdentityId != 0)
                 PlayerCharacterDied(diedCharacter.ControllerInfo.ControllingIdentityId);
         }
 
-        void Identity_CharacterChanged(MyCharacter oldCharacter, MyCharacter newCharacter)
+        private void Identity_CharacterChanged(MyCharacter oldCharacter, MyCharacter newCharacter)
         {
             if (oldCharacter != null)
                 oldCharacter.CharacterDied -= Character_CharacterDied;
@@ -1782,7 +1948,7 @@ namespace Sandbox.Game.Multiplayer
 
             // This happens when you load an existing game - only the local player will be in Sync.Clients, but there were
             // more connected players at the time of the save. In this case, we have to consider them as disconnected players
-            if (Sync.IsServer && MySteam.UserId != playerId.SteamId)
+            if (Sync.IsServer && Sync.MyId != playerId.SteamId)
                 playerOb.Connected = Sync.Clients.HasClient(playerId.SteamId);
             if (!playerOb.Connected)
             {
@@ -1816,27 +1982,27 @@ namespace Sandbox.Game.Multiplayer
         {
             long playerId = 0;
 
-            playerId = TryGetIdentityId(MySteam.UserId);
+            playerId = TryGetIdentityId(Sync.MyId);
             if (playerId != 0)
                 return playerId;
 
             // Backward compatibility:
             if (checkpoint.Players != null)
             {
-                if (checkpoint.Players.Dictionary.ContainsKey(MySteam.UserId))
-                    playerId = checkpoint.Players[MySteam.UserId].PlayerId != 0 ? checkpoint.Players[MySteam.UserId].PlayerId : playerId;
+                if (checkpoint.Players.Dictionary.ContainsKey(Sync.MyId))
+                    playerId = checkpoint.Players[Sync.MyId].PlayerId != 0 ? checkpoint.Players[Sync.MyId].PlayerId : playerId;
             }
             if (checkpoint.AllPlayers != null)
             {
                 foreach (var player in checkpoint.AllPlayers)
                 {
-                    if (player.SteamId == MySteam.UserId && !player.IsDead)
+                    if (player.SteamId == Sync.MyId && !player.IsDead)
                     {
                         playerId = player.PlayerId;
                         break;
                     }
 
-                    if (player.SteamId == MySteam.UserId && playerId == player.PlayerId && player.IsDead)
+                    if (player.SteamId == Sync.MyId && playerId == player.PlayerId && player.IsDead)
                     {
                         playerId = 0;
                         break;
@@ -1906,7 +2072,7 @@ namespace Sandbox.Game.Multiplayer
 
         [Conditional("DEBUG")]
         public void DebugDraw()
-        {  
+        {
             int y = 0;
             MyRenderProxy.DebugDrawText2D(new Vector2(0.0f, (y++) * 13.0f), "Steam clients:", Color.GreenYellow, 0.5f);
             foreach (var client in Sync.Clients.GetClients())
@@ -1955,9 +2121,9 @@ namespace Sandbox.Game.Multiplayer
                 MyRenderProxy.DebugDrawText2D(new Vector2(0.0f, (y++) * 13.0f), "  " + entityName + " controlled by " + ctrlName + " (entityId = " + entityId + ", playerId = " + entry.Value.ToString() + ")", color, 0.5f);
             }
 
-            if (MySession.ControlledEntity != null)
+            if (MySession.Static.ControlledEntity != null)
             {
-                var cockpit = MySession.ControlledEntity as MyShipController;
+                var cockpit = MySession.Static.ControlledEntity as MyShipController;
                 if (cockpit != null)
                 {
                     var grid = cockpit.Parent as MyCubeGrid;

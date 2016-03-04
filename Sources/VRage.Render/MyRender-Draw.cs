@@ -1584,7 +1584,7 @@ namespace VRageRender
 
                         isVisibleFromQuery = query.OcclusionQuery.PixelCount > 0;
 
-                        //Holy ATI shit
+                        //Holy ATI 
                         if (query.OcclusionQuery.PixelCount < 0)
                         {
                             isVisibleFromQuery = true;

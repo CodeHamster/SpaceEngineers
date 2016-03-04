@@ -13,6 +13,8 @@ using VRage.Animations;
 using VRage.Import;
 using VRageMath;
 using VRage.FileSystem;
+using VRage.Game.Definitions.Animation;
+using VRage.Game.Models;
 
 
 #endregion
@@ -43,6 +45,8 @@ namespace Sandbox.Game.Entities
         MySkinnedEntity m_skinnedEntity;
         string m_name;
 
+        Dictionary<float, string[]> m_boneLODs;
+
         #endregion
 
         #region Properties
@@ -50,31 +54,32 @@ namespace Sandbox.Game.Entities
         #endregion
 
 
-        public MyAnimationPlayerBlendPair(MySkinnedEntity skinnedEntity, string[] bones, string name)
+        public MyAnimationPlayerBlendPair(MySkinnedEntity skinnedEntity, string[] bones, Dictionary<float, string[]> boneLODs, string name)
         {
             m_bones = bones;
             m_skinnedEntity = skinnedEntity;
+            m_boneLODs = boneLODs;
             m_name = name;
         }
 
 
-        public void UpdateBones()
+        public void UpdateBones(float distance)
         {
             if (m_state != AnimationBlendState.Stopped)
             {
                 if (BlendPlayer.IsInitialized)
-                    BlendPlayer.UpdateBones();
+                    BlendPlayer.UpdateBones(distance);
 
                 if (ActualPlayer.IsInitialized)
-                    ActualPlayer.UpdateBones();
+                    ActualPlayer.UpdateBones(distance);
             }
         }
 
-        public void Advance()
+        public bool Advance()
         {
             if (m_state != AnimationBlendState.Stopped)
             {
-                float stepTime = MyEngineConstants.UPDATE_STEP_SIZE_IN_SECONDS;
+                float stepTime = VRage.Game.MyEngineConstants.UPDATE_STEP_SIZE_IN_SECONDS;
 
                 m_currentBlendTime += stepTime * ActualPlayer.TimeScale;
                 ActualPlayer.Advance(stepTime);
@@ -83,6 +88,11 @@ namespace Sandbox.Game.Entities
                 {
                     Stop(m_totalBlendTime);
                 }
+                return true;
+            }
+            else
+            {
+                return false;
             }
 
             //UpdateAnimation();
@@ -153,17 +163,15 @@ namespace Sandbox.Game.Entities
 
             animationDefinition.Status = MyAnimationDefinition.AnimationStatus.OK;
 
-            MyModel animation = MyModels.GetModelOnlyAnimationData(model);
+            MyModel animation = VRage.Game.Models.MyModels.GetModelOnlyAnimationData(model);
 
-            System.Diagnostics.Debug.Assert(animation.Animations.Clips.Count > 0);
-            if (animation.Animations.Clips.Count == 0)
+            System.Diagnostics.Debug.Assert(animation.Animations != null && animation.Animations.Clips.Count > 0);
+            if (animation.Animations == null || animation.Animations.Clips.Count == 0)
                 return;
 
             System.Diagnostics.Debug.Assert(animationDefinition.ClipIndex < animation.Animations.Clips.Count);
             if (animation.Animations.Clips.Count <= animationDefinition.ClipIndex)
                 return;
-
-            AnimationClip clip = animation.Animations.Clips[animationDefinition.ClipIndex];
 
             if (ActualPlayer.IsInitialized)
             {
@@ -171,7 +179,7 @@ namespace Sandbox.Game.Entities
             }
 
             // Create a clip player and assign it to this model                        
-            ActualPlayer.Initialize(clip, m_skinnedEntity, 1, timeScale, frameOption, m_bones);
+            ActualPlayer.Initialize(animation, m_name, animationDefinition.ClipIndex, m_skinnedEntity, 1, timeScale, frameOption, m_bones, m_boneLODs);
 
             m_state = AnimationBlendState.BlendIn;
             m_currentBlendTime = 0;
@@ -193,6 +201,11 @@ namespace Sandbox.Game.Entities
         public AnimationBlendState GetState()
         {
             return m_state;
+        }
+
+        public void SetBoneLODs(Dictionary<float, string[]> boneLODs)
+        {
+            m_boneLODs = boneLODs;
         }
     }
 }

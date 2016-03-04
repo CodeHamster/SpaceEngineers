@@ -12,6 +12,8 @@ using System.IO;
 using System.IO.Compression;
 using Sandbox.Game.Gui;
 using Sandbox.Graphics.GUI;
+using System.Diagnostics;
+using VRage.Game.Entity;
 
 namespace Sandbox.Game.Multiplayer
 {
@@ -106,19 +108,7 @@ namespace Sandbox.Game.Multiplayer
             [ProtoBuf.ProtoMember]
             public byte[] Argument;
         }
-
-        [ProtoBuf.ProtoContract]
-        [MessageIdAttribute(16281, P2PMessageEnum.Reliable)]
-        protected struct ProgramRepsonseMsg : IEntityMessage
-        {
-            [ProtoBuf.ProtoMember]
-            public long EntityId;
-
-            public long GetEntityId() { return EntityId; }
-            [ProtoBuf.ProtoMember]
-            public string Response;
-        }
-
+       
         static MySyncProgrammableBlock()
         {
             MySyncLayer.RegisterMessage<OpenEditorMsg>(OpenEditorRequest, MyMessagePermissions.ToServer, MyTransportMessageEnum.Request);
@@ -132,8 +122,6 @@ namespace Sandbox.Game.Multiplayer
 
             MySyncLayer.RegisterMessage<RunProgramMsg>(RunProgramRequest, MyMessagePermissions.ToServer, MyTransportMessageEnum.Request);
 
-            MySyncLayer.RegisterMessage<ProgramRepsonseMsg>(ProgramResponeSuccess, MyMessagePermissions.FromServer, MyTransportMessageEnum.Success);
-
         }
 
         public MySyncProgrammableBlock(MyProgrammableBlock block)
@@ -141,7 +129,7 @@ namespace Sandbox.Game.Multiplayer
             m_programmableBlock = block;
         }
 
-        public virtual void SendOpenEditorRequest(ulong user)
+        public void SendOpenEditorRequest(ulong user)
         {
             if (Sync.IsServer)
             {
@@ -207,7 +195,7 @@ namespace Sandbox.Game.Multiplayer
             }
         }
 
-        public virtual void SendCloseEditor()
+        public void SendCloseEditor()
         {          
             if (Sync.IsServer)
             {
@@ -231,7 +219,7 @@ namespace Sandbox.Game.Multiplayer
             }
         }
 
-        public virtual void SendUpdateProgramRequest(string program,string storage)
+        public void SendUpdateProgramRequest(string program,string storage)
         {
             var msg = new UpdateProgramMsg();
             msg.EntityId = m_programmableBlock.EntityId;
@@ -268,30 +256,13 @@ namespace Sandbox.Game.Multiplayer
                 (entity as MyProgrammableBlock).Run(StringCompressor.DecompressString(msg.Argument));
             }
         }
-        public virtual void SendRunProgramRequest(string argument)
+        public void SendRunProgramRequest(string argument)
         {
             var msg = new RunProgramMsg();
             msg.EntityId = m_programmableBlock.EntityId;
             msg.Argument = StringCompressor.CompressString(argument ?? string.Empty);
             Sync.Layer.SendMessageToServer(ref msg, MyTransportMessageEnum.Request);
-        }
-
-        static void ProgramResponeSuccess(ref ProgramRepsonseMsg msg, MyNetworkClient sender)
-        {
-            MyEntity entity;
-            MyEntities.TryGetEntityById(msg.EntityId, out entity);
-            if (entity is MyProgrammableBlock)
-            {
-                (entity as MyProgrammableBlock).WriteProgramResponse(msg.Response);
-            }
-        }
-        public virtual void SendProgramResponseMessage(string response)
-        {
-            var msg = new ProgramRepsonseMsg();
-            msg.EntityId = m_programmableBlock.EntityId;
-            msg.Response = response;
-            Sync.Layer.SendMessageToAll(ref msg, MyTransportMessageEnum.Success);
-        }
+        }      
     }
 
 }

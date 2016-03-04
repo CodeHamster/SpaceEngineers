@@ -5,19 +5,23 @@ using Sandbox.Engine.Utils;
 using Sandbox.Game.Entities.Character;
 using Sandbox.Game.Entities.Cube;
 using Sandbox.Game.GameSystems;
-using Sandbox.Game.GameSystems.Electricity;
 using Sandbox.ModAPI.Ingame;
 using System.Collections.Generic;
 using System.Diagnostics;
-using VRage.Components;
+using Sandbox.Definitions;
+using Sandbox.Game.EntityComponents;
+using VRage.Game.Components;
 using VRage.ModAPI;
 using VRage.Trace;
 using VRageMath;
 using VRageRender;
+using VRage.Game.Entity;
+using VRage;
+using VRage.Game;
 
 namespace Sandbox.Game.Entities
 {
-    abstract class MyGravityGeneratorBase : MyFunctionalBlock, IMyPowerConsumer, IMyGizmoDrawableObject, IMyGravityGeneratorBase, IMyGravityProvider
+    abstract class MyGravityGeneratorBase : MyFunctionalBlock, IMyGizmoDrawableObject, IMyGravityGeneratorBase, IMyGravityProvider
     {
         protected Color m_gizmoColor = new Vector4(0, 0.1f, 0, 0.1f);
         protected const float m_maxGizmoDrawDistance = 1000.0f;
@@ -25,7 +29,7 @@ namespace Sandbox.Game.Entities
         private object m_locker = new object();
 
         protected bool m_oldEmissiveState = false;
-        protected float m_gravityAcceleration = MyGravityProviderSystem.G;
+        protected readonly Sync<float> m_gravityAcceleration;
         protected HashSet<IMyEntity> m_containedEntities = new HashSet<IMyEntity>();
 
         public float GravityAcceleration
@@ -35,17 +39,9 @@ namespace Sandbox.Game.Entities
             {
                 if (m_gravityAcceleration != value)
                 {
-                    m_gravityAcceleration = value;
-                    PowerReceiver.Update();
-                    RaisePropertiesChanged();
+                    m_gravityAcceleration.Value = value;
                 }
             }
-        }
-
-        public MyPowerReceiver PowerReceiver
-        {
-            get;
-            protected set;
         }
 
         public abstract bool IsPositionInRange(Vector3D worldPoint);
@@ -57,38 +53,42 @@ namespace Sandbox.Game.Entities
 
         public override void Init(MyObjectBuilder_CubeBlock objectBuilder, MyCubeGrid cubeGrid)
         {
+            InitializeSinkComponent();
             base.Init(objectBuilder, cubeGrid);
             if (CubeGrid.CreatePhysics)
             {
-                MyGravityProviderSystem.AddGravityGenerator(this);
-
             	// Put on my fake, because it does performance issues
                 if (MyFakes.ENABLE_GRAVITY_PHANTOM)
                 {
-                
                         var shape = CreateFieldShape();
                         Physics = new Engine.Physics.MyPhysicsBody(this, RigidBodyFlag.RBF_KINEMATIC);
                         Physics.IsPhantom = true;
-                        Physics.CreateFromCollisionObject(shape, PositionComp.LocalVolume.Center, WorldMatrix, null, Sandbox.Engine.Physics.MyPhysics.GravityPhantomLayer);
+                        Physics.CreateFromCollisionObject(shape, PositionComp.LocalVolume.Center, WorldMatrix, null, Sandbox.Engine.Physics.MyPhysics.CollisionLayers.GravityPhantomLayer);
                         shape.Base.RemoveReference();
                         Physics.Enabled = IsWorking;
                 }
                 NeedsUpdate |= MyEntityUpdateEnum.EACH_FRAME;
 
                 SlimBlock.ComponentStack.IsFunctionalChanged += ComponentStack_IsFunctionalChanged;
+                ResourceSink.Update();
             }
+            m_soundEmitter = new MyEntity3DSoundEmitter(this);
+            m_baseIdleSound.Init("BlockGravityGen");
+			
         }
+
+	    protected abstract void InitializeSinkComponent();
 
         protected void UpdateFieldShape()
         {
-            if (MyFakes.ENABLE_GRAVITY_PHANTOM)
+            if (MyFakes.ENABLE_GRAVITY_PHANTOM && Physics != null)
             {
                 var shape = CreateFieldShape();
                 Physics.RigidBody.SetShape(shape);
                 shape.Base.RemoveReference();
             }
 
-            PowerReceiver.Update();
+			ResourceSink.Update();
         }
 
         private HkBvShape CreateFieldShape()
@@ -99,33 +99,47 @@ namespace Sandbox.Game.Entities
         }
         protected override bool CheckIsWorking()
         {
-            return PowerReceiver.IsPowered && base.CheckIsWorking();
+			return (ResourceSink != null ? ResourceSink.IsPowered : true) && base.CheckIsWorking();
         }
 
         public MyGravityGeneratorBase()
             : base()
         {
-            m_baseIdleSound.Init("BlockGravityGen");
+            m_gravityAcceleration.ValueChanged += (x) => AccelerationChanged();
+        }
+
+        void AccelerationChanged()
+        {
+            ResourceSink.Update();
         }
 
         public override void OnAddedToScene(object source)
         {
             base.OnAddedToScene(source);
+            MyGravityProviderSystem.AddGravityGenerator(this);
             UpdateEmissivity();
-            PowerReceiver.Update();
+
+			if(ResourceSink != null)
+				ResourceSink.Update();
+        }
+        public override void OnRemovedFromScene(object source)
+        {
+            MyGravityProviderSystem.RemoveGravityGenerator(this);
+            base.OnRemovedFromScene(source);
         }
 
         public override void OnBuildSuccess(long builtBy)
         {
-            PowerReceiver.Update();
+			ResourceSink.Update();
             base.OnBuildSuccess(builtBy);
         }
 
         public override void UpdateBeforeSimulation()
         {
             base.UpdateBeforeSimulation();
-
-            PowerReceiver.Update();
+			
+			if(ResourceSink != null)
+				ResourceSink.Update();
 
             if (IsWorking)
             {
@@ -134,8 +148,9 @@ namespace Sandbox.Game.Entities
                     MyEntity entity = entityInterface as MyEntity;
                     MyCharacter character = entity as MyCharacter;
                     IMyVirtualMass mass = entity as IMyVirtualMass;
-
-                    var gravity = GetWorldGravity(entity.WorldMatrix.Translation);
+					
+					var naturalGravityMultiplier = MyGravityProviderSystem.CalculateHighestNaturalGravityMultiplierInPoint(entity.WorldMatrix.Translation);
+					var gravity = GetWorldGravity(entity.WorldMatrix.Translation) * MyGravityProviderSystem.CalculateArtificialGravityStrengthMultiplier(naturalGravityMultiplier);
 
                     if (mass != null && entity.Physics.RigidBody.IsActive)
                     {
@@ -158,15 +173,9 @@ namespace Sandbox.Game.Entities
             }
         }
 
-        protected override void Closing()
-        {
-            MyGravityProviderSystem.RemoveGravityGenerator(this);
-            base.Closing();
-        }
-
         protected override void OnEnabledChanged()
         {
-            PowerReceiver.Update();
+			ResourceSink.Update();
             base.OnEnabledChanged();
         }
 
@@ -196,18 +205,19 @@ namespace Sandbox.Game.Entities
             UpdateEmissivity();
         }
 
-        protected void Receiver_RequiredInputChanged(MyPowerReceiver receiver, float oldRequirement, float newRequirement)
+		protected void Receiver_RequiredInputChanged(MyDefinitionId resourceTypeId, MyResourceSinkComponent receiver, float oldRequirement, float newRequirement)
         {
             UpdateText();
         }
 
         void ComponentStack_IsFunctionalChanged()
         {
-            PowerReceiver.Update();
+			ResourceSink.Update();
         }
 
         void phantom_Enter(HkPhantomCallbackShape sender, HkRigidBody body)
         {
+            VRage.ProfilerShort.Begin("GravityEnter");
             var entity = body.GetEntity(0);// jn: TODO we should collect bodies not entities
             // HACK: disabled gravity for ships (there may be more changes so I won't add Entity.RespectsGravity now)
             lock (m_locker)
@@ -221,10 +231,12 @@ namespace Sandbox.Game.Entities
                         ((MyPhysicsBody)entity.Physics).RigidBody.Activate();
                 }
             }
+            VRage.ProfilerShort.End();
         }
 
         void phantom_Leave(HkPhantomCallbackShape sender, HkRigidBody body)
         {
+            VRage.ProfilerShort.Begin("GravityLeave");
             var entity = body.GetEntity(0);// jn: TODO we should collect bodies not entities
 
             lock (m_locker)
@@ -235,6 +247,7 @@ namespace Sandbox.Game.Entities
                     MyTrace.Send(TraceWindow.EntityId, string.Format("Entity left gravity field, entity: {0}", entity));
                 }
             }
+            VRage.ProfilerShort.End();
         }
         public Color GetGizmoColor()
         {
@@ -285,5 +298,10 @@ namespace Sandbox.Game.Entities
         {
             return false;
         }
+
+		public float GetGravityMultiplier(Vector3D worldPoint)
+		{
+			return (IsPositionInRange(worldPoint) ? 1.0f : 0.0f);
+		}
     }
 }

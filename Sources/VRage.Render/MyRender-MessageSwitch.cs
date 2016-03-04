@@ -2,7 +2,6 @@
 using System.Collections.Generic;
 using System.Diagnostics;
 using VRage;
-using VRage;
 using VRage.Import;
 using VRage.Library.Utils;
 using VRage.Utils;
@@ -16,7 +15,7 @@ namespace VRageRender
 {
     internal static partial class MyRender
     {
-        private static void ProcessMessage(IMyRenderMessage message)
+        private static void ProcessMessage(MyRenderMessageBase message)
         {
             try
             {
@@ -39,7 +38,7 @@ namespace VRageRender
             }
         }
 
-        private static void ProcessMessageInternal(IMyRenderMessage message)
+        private static void ProcessMessageInternal(MyRenderMessageBase message)
         {
             switch (message.MessageType)
             {
@@ -429,7 +428,7 @@ namespace VRageRender
 
                 case MyRenderMessageEnum.DrawScene:
                     {
-                        var rMessage = (IMyRenderMessage)message;
+                        var rMessage = (MyRenderMessageBase)message;
                         EnqueueDrawMessage(rMessage);
 
                         break;
@@ -593,8 +592,6 @@ namespace VRageRender
 
                         EnableRenderModule((MyRenderModuleEnum)rMessage.ID, rMessage.Enable);
 
-
-
                         break;
                     }
 
@@ -636,7 +633,6 @@ namespace VRageRender
                             var clipmap = (MyRenderClipmap)renderObject;
                             clipmap.UpdateCell(rMessage);
                         }
-                        rMessage.Batches.Clear();
 
                         break;
                     }
@@ -659,11 +655,10 @@ namespace VRageRender
                     {
                         MyRender.RebuildCullingStructure();
 
-
-
                         break;
                     }
 
+                case MyRenderMessageEnum.ReloadGrass:
                 case MyRenderMessageEnum.ReloadEffects:
                     {
                         MyRender.RootDirectoryEffects = MyRender.RootDirectoryDebug;
@@ -674,6 +669,7 @@ namespace VRageRender
 
                         break;
                     }
+
 
                 case MyRenderMessageEnum.ReloadModels:
                     {
@@ -701,6 +697,20 @@ namespace VRageRender
 
                         for (int i = 0; i < rMessage.Materials.Length; ++i)
                             MyRenderVoxelMaterials.Add(ref rMessage.Materials[i]);
+
+                        rMessage.Materials = null;
+
+
+                        break;
+                    }
+
+                case MyRenderMessageEnum.UpdateRenderVoxelMaterials:
+                    {
+                        MyRenderVoxelMaterials.Clear();
+
+                        var rMessage = (MyRenderMessageUpdateRenderVoxelMaterials)message;
+
+                        MyRenderVoxelMaterials.Add(ref rMessage.Materials[0]);
 
                         rMessage.Materials = null;
 
@@ -845,6 +855,41 @@ namespace VRageRender
 
                         break;
                     }
+                case MyRenderMessageEnum.UpdateColorEmissivity:
+                    {
+                        var rMessage = (MyRenderMessageUpdateColorEmissivity)message;
+
+                        MyRenderObject renderObject;
+                        if (m_renderObjects.TryGetValue(rMessage.ID, out renderObject))
+                        {
+                            MyRenderEntity renderEntity = renderObject as MyRenderEntity;
+                            List<MyRenderMeshMaterial> materials = renderEntity.Lods[rMessage.LOD].MeshMaterials;
+                            MyRenderModel model = renderEntity.Lods[rMessage.LOD].Model;
+                            MyRenderMeshMaterial material = null;
+
+                            model.HasSharedMaterials = false;
+
+                            if (rMessage.MaterialName != null)
+                            {
+                                foreach (var rMaterial in materials)
+                                {
+                                    if (rMaterial.MaterialName == rMessage.MaterialName)
+                                    {
+                                        material = rMaterial;
+                                        break;
+                                    }
+                                }
+                            }
+
+                            if (material != null)
+                            {
+                                material.DiffuseColor = rMessage.DiffuseColor.ToVector3();
+                                material.Emissivity = rMessage.Emissivity;
+                            }
+                        }
+
+                        break;
+                    }
 
                 case MyRenderMessageEnum.ChangeModel:
                     {
@@ -868,6 +913,15 @@ namespace VRageRender
 
 
 
+
+                        break;
+                    }
+
+                case MyRenderMessageEnum.UpdateGameplayFrame:
+                    {
+                        var rMessage = (MyRenderMessageUpdateGameplayFrame)message;
+
+                        Settings.GameplayFrame = rMessage.GameplayFrame;
 
                         break;
                     }
@@ -1045,10 +1099,12 @@ namespace VRageRender
                     {
                         var rMessage = (MyRenderMessageUpdateRenderEnvironment)message;
 
+                        float DX9Rescaling = 0.1195f;
+
                         Sun.Direction = rMessage.SunDirection;
                         Sun.Color = rMessage.SunColor;
-                        Sun.BackColor = rMessage.SunBackColor;
-                        Sun.BackIntensity = rMessage.SunBackIntensity;
+                        Sun.BackColor = rMessage.AdditionalSunColors[0];
+                        Sun.BackIntensity = rMessage.AdditionalSunIntensities[0] * DX9Rescaling;
                         Sun.Intensity = rMessage.SunIntensity;
                         Sun.LightOn = rMessage.SunLightOn;
                         Sun.SpecularColor = rMessage.SunSpecularColor;
@@ -1455,12 +1511,6 @@ namespace VRageRender
 
                         MyRenderQualityProfile profile = MyRenderConstants.m_renderQualityProfiles[(int)rMessage.RenderQuality];
 
-                        profile.LodTransitionDistanceNear = rMessage.LodTransitionDistanceNear;
-                        profile.LodTransitionDistanceFar = rMessage.LodTransitionDistanceFar;
-                        profile.LodTransitionDistanceBackgroundStart = rMessage.LodTransitionDistanceBackgroundStart;
-                        profile.LodTransitionDistanceBackgroundEnd = rMessage.LodTransitionDistanceBackgroundEnd;
-                        profile.EnvironmentLodTransitionDistance = rMessage.EnvironmentLodTransitionDistance;
-                        profile.EnvironmentLodTransitionDistanceBackground = rMessage.EnvironmentLodTransitionDistanceBackground;
                         profile.EnableCascadeBlending = rMessage.EnableCascadeBlending;
 
                         MyRenderTexturePool.RenderQualityChanged(rMessage.RenderQuality);
@@ -1543,6 +1593,7 @@ namespace VRageRender
                 case MyRenderMessageEnum.DebugDrawTriangles:
                 case MyRenderMessageEnum.DebugDrawPlane:
                 case MyRenderMessageEnum.DebugDrawCylinder:
+                case MyRenderMessageEnum.DebugWaitForPresent:
                     {
                         EnqueueDebugDrawMessage(message);
                     }

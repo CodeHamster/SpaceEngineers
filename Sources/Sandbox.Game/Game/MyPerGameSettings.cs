@@ -1,15 +1,22 @@
-﻿using Sandbox.Engine.Physics;
+﻿using Sandbox.Common.ObjectBuilders.Definitions;
+using Sandbox.Engine.Multiplayer;
+using Sandbox.Engine.Networking;
+using Sandbox.Engine.Physics;
 using Sandbox.Engine.Utils;
 using Sandbox.Engine.Voxels;
 using Sandbox.Game.Entities.Cube;
 using Sandbox.Game.Entities.Interfaces;
 using System;
 using System.Diagnostics;
-using VRage.Components;
+using VRage.Game.Components;
+using Sandbox.Game.Entities;
+using Sandbox.Game.Weapons;
 using VRage.Data;
 using VRage.Data.Audio;
 using VRage.Utils;
 using VRageMath;
+using Sandbox.Common;
+using VRage.Game;
 
 namespace Sandbox.Game
 {
@@ -58,6 +65,10 @@ namespace Sandbox.Game
         public Type BattleLobbyClientScreen;
         public Type ScenarioLobbyClientScreen;
         public Type InventoryScreen;
+        public Type AdminMenuScreen;
+        public Type FactionScreen;
+        public Type CreateFactionScreen;
+        public Type PlayersScreen;
 
         public string[] MainMenuBackgroundVideos;
 
@@ -106,6 +117,7 @@ namespace Sandbox.Game
         public static MyPlacementSettings BuildingSettings;
         public static MyPlacementSettings PastingSettings;
         public static string GameModAssembly;
+        public static string GameModObjBuildersAssembly;
         public static string SandboxAssembly = "Sandbox.Common.dll";
         public static string SandboxGameAssembly = "Sandbox.Game.dll";
 
@@ -113,9 +125,15 @@ namespace Sandbox.Game
         public static int LoadingScreenQuoteCount = 71;
         public static bool OffsetVoxelMapByHalfVoxel = false;
 
+        public static bool UseVolumeLimiter = false;
+
+        public static bool UseSameSoundLimiter = false;
+        public static int SameSoundLimiterCount = 3;
+
         public static bool RestrictSpectatorFlyMode = false;
 
         private static Type m_isoMesherType = typeof(MyDualContouringMesher);
+        //private static Type m_isoMesherType = typeof(MyMarchingCubesMesher);
         public static Type IsoMesherType
         {
             get
@@ -130,6 +148,9 @@ namespace Sandbox.Game
             }
         }
 
+        // Minimum mass a floating object must have to be able to push large ships.
+        public static double MinimumLargeShipCollidableMass = 1000;
+
         public static float? ConstantVoxelAmbient;
 
         private const float DefaultMaxWalkSpeed = 6.0f;
@@ -141,8 +162,6 @@ namespace Sandbox.Game
             SprintAcceleration     = 100, //m/ss
             SprintDecceleration    = 20,  //m/ss
         };
-
-        public static float CharacterDefaultLootingCounter = 5 * 60.0f;
 
         public static MyCollisionParticleSettings CollisionParticle = new MyCollisionParticleSettings()
         {
@@ -176,9 +195,20 @@ namespace Sandbox.Game
         public static bool CharacterStartsOnVoxel = false;
         public static bool LimitedWorld = false;
         public static bool EnableCollisionSparksEffect = true;
-        public static bool UseAnimationInsteadOfIK = false;
+
+        private static bool m_useAnimationInsteadOfIK = false;
+        public static bool UseAnimationInsteadOfIK { set { m_useAnimationInsteadOfIK = value; } }
+        public static bool CheckUseAnimationInsteadOfIK(IMyHandheldGunObject<MyDeviceBase> currentWeapon = null)
+        {
+            if (currentWeapon != null)
+                return m_useAnimationInsteadOfIK || currentWeapon.ForceAnimationInsteadOfIK;
+
+            return m_useAnimationInsteadOfIK;
+        }
+
         public static bool MultiplayerEnabled = true;
         public static bool EnableMultiplayerVelocityCompensation = true;
+        public static Type ClientStateType = typeof(MyClientState);
 
         public static bool WorkshopUseUGCEnumerate = true;
         public static string SteamGameServerGameDir = "Space Engineers";
@@ -194,11 +224,7 @@ namespace Sandbox.Game
         public static MyGUISettings GUI = new MyGUISettings()
         {
             MultipleSpinningWheels = true,
-            LoadingScreenIndexRange = new Vector2I(1,1),
-            MainMenuBackgroundVideos = new string[] {
-                @"Videos\Background01_720p.wmv",
-                @"Videos\Background02_720p.wmv",
-            },
+            LoadingScreenIndexRange = new Vector2I(1,24),
             HUDScreen = typeof(Sandbox.Game.Gui.MyGuiScreenHudSpace),
             ToolbarConfigScreen = typeof(Sandbox.Game.Gui.MyGuiScreenCubeBuilder),
             CustomWorldScreen = typeof(Sandbox.Game.Gui.MyGuiScreenWorldSettings),
@@ -208,9 +234,16 @@ namespace Sandbox.Game
             HelpScreen = typeof(Sandbox.Game.Gui.MyGuiScreenHelpSpace),
             VoxelMapEditingScreen = typeof(Sandbox.Game.Gui.MyGuiScreenDebugSpawnMenu),
             ScenarioLobbyClientScreen = typeof(Sandbox.Game.Screens.MyGuiScreenScenarioMpClient),
+            AdminMenuScreen = typeof(Sandbox.Game.Gui.MyGuiScreenAdminMenu),
+            CreateFactionScreen = typeof(Sandbox.Game.Gui.MyGuiScreenCreateOrEditFaction),
+            PlayersScreen = typeof(Sandbox.Game.Gui.MyGuiScreenPlayers)
         };
+
+        // Artificial intelligence
         public static Type BotFactoryType = null;
         public static bool EnableAi = false;
+        public static bool EnablePathfinding = false;
+        public static bool NavmeshPresumesDownwardGravity = false;
 
         public static Type ControlMenuInitializerType = null;
         public static Type CompatHelperType = typeof(Sandbox.Game.World.MySessionCompatHelper);
@@ -225,14 +258,15 @@ namespace Sandbox.Game
         public static RigidBodyFlag GridRBFlagOnClients = RigidBodyFlag.RBF_DEFAULT;
         public static RigidBodyFlag NetworkCharacterType = RigidBodyFlag.RBF_KINEMATIC;
         public static float NetworkCharacterScale = 1.0f;
-        public static int NetworkCharacterCollisionLayer = MyPhysics.CharacterNetworkCollisionLayer;
+        public static int NetworkCharacterCollisionLayer = MyPhysics.CollisionLayers.CharacterNetworkCollisionLayer;
         public static bool TryConvertGridToDynamicAfterSplit = false;
+        public static bool AnimateOnlyVisibleCharacters = false;
 
         // DAMAGE SETTINGS
         public static float CharacterDamageMinVelocity = 12.0f;    // minimal speed of character to cause damage to itself 3 blocks ~ 16.7 m/s, 2 blocks 13.47 m/s 1 block 9.0 m/s
         public static float CharacterDamageDeadlyDamageVelocity = 16.0f; // speed to cause deadly damage
         public static float CharacterDamageMediumDamageVelocity = 13.0f; // speed to cause mediun damage when character falls
-        public static float CharacterDamageHitObjectMinMass = 200f;    // minimal weight of the object to cause damage when squeezing the character
+        public static float CharacterDamageHitObjectMinMass = 10f;    // minimal weight of the object to cause damage when squeezing the character
         public static float CharacterDamageHitObjectMinVelocity = 8.5f;   // minimal speed of object to cause damage to character 25 km/h ~ 7 m/s 
         public static float CharacterDamageHitObjectMediumEnergy = 100; // energy of the colliding object with the character to cause the medium damage
         public static float CharacterDamageHitObjectSmallEnergy = 80;
@@ -248,7 +282,7 @@ namespace Sandbox.Game
         public static float CharacterSqueezeCriticalDamageMass = 3000;
         public static float CharacterSqueezeDeadlyDamageMass = 5000;
         
-        public static bool CharacterSuicideEnabled = false;
+        public static bool CharacterSuicideEnabled = true;
 
         public static Func<bool> ConstrainInventory = () => Sandbox.Game.World.MySession.Static.SurvivalMode;
         
@@ -279,7 +313,25 @@ namespace Sandbox.Game
 
         public static Type VoiceChatLogic = null;
         public static bool VoiceChatEnabled = false;
+        public static bool EnableMutePlayer = false;    // mute checkox on players page + muting of voicechat of selected players
 
         public static bool EnableJumpDrive = false;
+
+        public static Engine.Networking.IMyAnalytics AnalyticsTracker = null; // = MyInfinarioAnalytics.Instance;
+        
+        public static bool EnableFloatingObjectsActiveSync = false;
+        public static string InfinarioOfficial;
+        public static string InfinarioDebug;
+        public static bool DisableAnimationsOnDS = true;
+        
+        public static float CharacterGravityMultiplier = 1.0f;
+
+        public static bool BlockForVoxels = false;
+
+        public static float MaxAntennaDrawDistance = 500000;
+
+        // Factions
+        public static MyRelationsBetweenFactions DefaultFactionRelationship = MyRelationsBetweenFactions.Enemies;
+
     }
 }

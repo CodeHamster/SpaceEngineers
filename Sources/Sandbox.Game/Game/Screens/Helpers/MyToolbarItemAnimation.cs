@@ -13,6 +13,9 @@ using Sandbox.Common.ObjectBuilders.Definitions;
 using Sandbox.Game.Weapons;
 using System.Diagnostics;
 using Sandbox.Game.Entities.Character;
+using VRage.Game;
+using VRage.Game.Definitions.Animation;
+using VRage.Game.Entity;
 
 namespace Sandbox.Game.Screens.Helpers
 {
@@ -24,7 +27,7 @@ namespace Sandbox.Game.Screens.Helpers
             base.Init(objBuilder);
 
             ActivateOnClick = true;
-            WantsToBeActivated = false;
+            WantsToBeActivated = true; //by Gregory: changed to true because of 'Toolbar switching not working correctly' bug
             return true;
         }
 
@@ -35,7 +38,7 @@ namespace Sandbox.Game.Screens.Helpers
 
             var animationDefinition = (MyAnimationDefinition)Definition;
 
-            var controlledObject = MySession.ControlledEntity is MyCockpit ? ((MyCockpit)MySession.ControlledEntity).Pilot : MySession.LocalCharacter;
+            var controlledObject = MySession.Static.ControlledEntity is MyCockpit ? ((MyCockpit)MySession.Static.ControlledEntity).Pilot : MySession.Static.LocalCharacter;
 
             if (controlledObject != null)
             {
@@ -44,7 +47,7 @@ namespace Sandbox.Game.Screens.Helpers
                     AnimationSubtypeName = animationDefinition.Id.SubtypeName,
                     BlendTime = 0.2f,
                     PlaybackCommand = MyPlaybackCommand.Play,
-                    FrameOption = animationDefinition.Loop ? MyFrameOption.Loop : MyFrameOption.None,
+                    FrameOption = animationDefinition.Loop ? MyFrameOption.Loop : MyFrameOption.PlayOnce,
                     TimeScale = 1
                 },
                 true);

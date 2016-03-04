@@ -28,72 +28,19 @@ using Sandbox.Game.Localization;
 using VRage.Library.Utils;
 using VRage.Audio;
 using Sandbox.Game.Entities.Character.Components;
+using VRage.Game;
+using VRage.Library.Collections;
+using VRage.ObjectBuilders;
 
 #endregion
 
 namespace Sandbox.Game.Multiplayer
 {
-    delegate void ChangeMovementStateDelegate(MyCharacterMovementEnum state);
     delegate void SwitchCharacterModelDelegate(string model, Vector3 colorMaskHSV);
-    delegate void ChangeFlagsDelegate(bool enableJetpack, bool enableDampeners, bool enableLights, bool enableIronsight, bool enableBroadcast, bool targetFromCamera);
-    delegate void ChangeHeadOrSpineDelegate(float headLocalXAngle, float headLocalYAngle, Quaternion spineRotation,
-    Quaternion headRotation, Quaternion handRotation, Quaternion upperHandRotation);
-    delegate void DoDamageDelegate(float damage, MyStringHash damageType, long attackerId);
 
     [PreloadRequired]
     class MySyncCharacter : MySyncControllableEntity
     {
-        [Flags]
-        enum CharacterFlags
-        {
-            Jetpack = 0x1,
-            Dampeners = 0x2,
-            Lights = 0x4,
-            Ironsight = 0x8,
-            Broadcast = 0x10,
-            TargetFromCamera = 0x20,
-        }
-
-        [MessageId(2, P2PMessageEnum.Reliable)]
-        struct ChangeMovementStateMsg : IEntityMessage
-        {
-            public long CharacterEntityId;
-            public long GetEntityId() { return CharacterEntityId; }
-
-            public MyCharacterMovementEnum MovementState;
-        }
-
-        [MessageId(3, P2PMessageEnum.Reliable)]
-        struct ChangeFlagsMsg : IEntityMessage
-        {
-            public long CharacterEntityId;
-            public long GetEntityId() { return CharacterEntityId; }
-
-            public CharacterFlags Flags;
-
-            public bool EnableJetpack { get { return (Flags & CharacterFlags.Jetpack) != 0; } }
-            public bool EnableDampeners { get { return (Flags & CharacterFlags.Dampeners) != 0; } }
-            public bool EnableLights { get { return (Flags & CharacterFlags.Lights) != 0; } }
-            public bool EnableIronsight { get { return (Flags & CharacterFlags.Ironsight) != 0; } }
-            public bool EnableBroadcast { get { return (Flags & CharacterFlags.Broadcast) != 0; } }
-            public bool TargetFromCamera { get { return (Flags & CharacterFlags.TargetFromCamera) != 0; } }
-        }
-
-        [MessageId(4, SteamSDK.P2PMessageEnum.Unreliable)]
-        struct ChangeHeadOrSpineMsg : IEntityMessage
-        {
-            public long CharacterEntityId;
-            public long GetEntityId() { return CharacterEntityId; }
-
-            public float HeadLocalXAngle;
-            public float HeadLocalYAngle;
-
-            public Quaternion AdditionalSpineRotation;
-            public Quaternion AdditionalHeadRotation;
-            public Quaternion AdditionalHandRotation;
-            public Quaternion AdditionalUpperHandRotation;
-        }
-
         [MessageId(4758, P2PMessageEnum.Reliable)]
         [ProtoContract]
         struct SwitchCharacterModelMsg : IEntityMessage
@@ -107,22 +54,6 @@ namespace Sandbox.Game.Multiplayer
 
             [ProtoMember]
             public Vector3 ColorMaskHSV;
-        }
-
-        [MessageId(7414, SteamSDK.P2PMessageEnum.Unreliable)]
-        public struct CharacterInputMsg : IEntityMessage
-        {
-            public long CharacterEntityId;
-            public long GetEntityId() { return CharacterEntityId; }
-
-            public Quaternion Orientation;
-            public Vector3D Position;
-
-            public ushort ClientFrameId;
-
-            public Vector3 MoveIndicator;
-            public Vector3 RotationIndicator;
-            public MyCharacterMovementFlags MovementFlags;
         }
 
         [MessageId(7415, P2PMessageEnum.Reliable)]
@@ -149,18 +80,6 @@ namespace Sandbox.Game.Multiplayer
             public float TimeScale;
         }
 
-        [MessageId(7416, P2PMessageEnum.Reliable)]
-        [ProtoContract]
-        struct AttachToCockpitMsg : IEntityMessage
-        {
-            [ProtoMember]
-            public long CharacterEntityId;
-            public long GetEntityId() { return CharacterEntityId; }
-
-            [ProtoMember]
-            public long CockpitEntityId;
-        }
-
         [MessageId(7417, P2PMessageEnum.Unreliable)]
         struct UpdateOxygenMsg : IEntityMessage
         {
@@ -170,11 +89,15 @@ namespace Sandbox.Game.Multiplayer
             public float OxygenAmount;
         }
 
+        [ProtoContract]
         [MessageId(7418, P2PMessageEnum.Reliable)]
         struct RefillFromBottleMsg : IEntityMessage
         {
+            [ProtoMember]
             public long CharacterEntityId;
             public long GetEntityId() { return CharacterEntityId; }
+            [ProtoMember]
+            public SerializableDefinitionId GasId;
         }
 
         [MessageId(7419, P2PMessageEnum.Unreliable)]
@@ -199,7 +122,7 @@ namespace Sandbox.Game.Multiplayer
             public long CharacterEntityId;
             public long GetEntityId() { return CharacterEntityId; }
 
-            [ProtoMember]            
+            [ProtoMember]
             public int TransformsCount;
 
             [ProtoMember]
@@ -215,15 +138,37 @@ namespace Sandbox.Game.Multiplayer
             public Vector3 worldPosition;
         }
 
+        [ProtoContract]
+        [MessageId(7421, P2PMessageEnum.Unreliable)]
+        public struct UpdateGasFillLevelMsg : IEntityMessage
+        {
+            [ProtoMember]
+            public long CharacterEntityId;
+            public long GetEntityId() { return CharacterEntityId; }
+
+            [ProtoMember]
+            public SerializableDefinitionId GasId;
+
+            [ProtoMember]
+            public float FillLevel;
+        }
+
+        [ProtoContract]
+        [MessageId(7422, P2PMessageEnum.Reliable)]
+        public struct SetCharacterPhysicsEnabledMsg : IEntityMessage
+        {
+            [ProtoMember]
+            public long CharacterEntityId;
+            public long GetEntityId() { return CharacterEntityId; }
+
+            [ProtoMember]
+            public bool Enabled;
+        }
+
         static MySyncCharacter()
         {
-            MySyncLayer.RegisterEntityMessage<MySyncCharacter, ChangeMovementStateMsg>(OnMovementStateChanged, MyMessagePermissions.Any);
-            MySyncLayer.RegisterEntityMessage<MySyncCharacter, SwitchCharacterModelMsg>(OnSwitchCharacterModel, MyMessagePermissions.Any);
-            MySyncLayer.RegisterEntityMessage<MySyncCharacter, ChangeFlagsMsg>(OnFlagsChanged, MyMessagePermissions.Any);
-            MySyncLayer.RegisterEntityMessage<MySyncCharacter, ChangeHeadOrSpineMsg>(OnHeadOrSpineChanged, MyMessagePermissions.Any);
-            MySyncLayer.RegisterEntityMessage<MySyncCharacter, CharacterInputMsg>(OnCharacterInput, MyMessagePermissions.Any);
-            MySyncLayer.RegisterEntityMessage<MySyncCharacter, AnimationCommandMsg>(OnAnimationCommand, MyMessagePermissions.Any);
-            MySyncLayer.RegisterEntityMessage<MySyncCharacter, AttachToCockpitMsg>(OnAttachToCockpit, MyMessagePermissions.FromServer);
+            MySyncLayer.RegisterEntityMessage<MySyncCharacter, SwitchCharacterModelMsg>(OnSwitchCharacterModel, MyMessagePermissions.FromServer | MyMessagePermissions.ToServer | MyMessagePermissions.ToSelf);
+            MySyncLayer.RegisterEntityMessage<MySyncCharacter, AnimationCommandMsg>(OnAnimationCommand, MyMessagePermissions.FromServer | MyMessagePermissions.ToServer | MyMessagePermissions.ToSelf);
 
             //Chat messages
             MySyncLayer.RegisterEntityMessage<MySyncCharacter, SendPlayerMessageMsg>(OnPlayerMessageRequest, MyMessagePermissions.ToServer, Engine.Multiplayer.MyTransportMessageEnum.Request);
@@ -239,10 +184,18 @@ namespace Sandbox.Game.Multiplayer
 
             MySyncLayer.RegisterEntityMessage<MySyncCharacter, UpdateOxygenMsg>(OnUpdateOxygen, MyMessagePermissions.FromServer);
             MySyncLayer.RegisterEntityMessage<MySyncCharacter, RefillFromBottleMsg>(OnRefillFromBottle, MyMessagePermissions.FromServer);
+            MySyncLayer.RegisterEntityMessage<MySyncCharacter, UpdateGasFillLevelMsg>(OnUpdateStoredGas, MyMessagePermissions.FromServer);
 
             MySyncLayer.RegisterEntityMessage<MySyncCharacter, PlaySecondarySoundMsg>(OnSecondarySoundPlay, MyMessagePermissions.ToServer | MyMessagePermissions.FromServer);
 
             MySyncLayer.RegisterEntityMessage<MySyncCharacter, RagdollTransformsMsg>(OnRagdollTransformsUpdate, MyMessagePermissions.FromServer);
+
+            MySyncLayer.RegisterEntityMessage<MySyncCharacter, SetCharacterPhysicsEnabledMsg>(OnCharacterPhysicsEnabled, MyMessagePermissions.FromServer);
+        }
+
+        private static void OnCharacterPhysicsEnabled(MySyncCharacter sync, ref SetCharacterPhysicsEnabledMsg msg, MyNetworkClient sender)
+        {
+            sync.Entity.Physics.Enabled = msg.Enabled;
         }
 
         private static void OnRagdollTransformsUpdate(MySyncCharacter syncObject, ref RagdollTransformsMsg message, MyNetworkClient sender)
@@ -252,16 +205,16 @@ namespace Sandbox.Game.Multiplayer
             if (syncObject.Entity.Physics == null) return;
             if (syncObject.Entity.Physics.Ragdoll == null) return;
             if (ragdollComponent.RagdollMapper == null) return;
-            if (!syncObject.Entity.Physics.Ragdoll.IsAddedToWorld) return;
+            if (!syncObject.Entity.Physics.Ragdoll.InWorld) return;
             if (!ragdollComponent.RagdollMapper.IsActive) return;
             Debug.Assert(message.worldOrientation != null && message.worldOrientation != Quaternion.Zero, "Received invalid ragdoll orientation from server!");
             Debug.Assert(message.worldPosition != null && message.worldPosition != Vector3.Zero, "Received invalid ragdoll orientation from server!");
             Debug.Assert(message.transformsOrientations != null && message.transformsPositions != null, "Received empty ragdoll transformations from server!");
-            Debug.Assert(message.transformsPositions.Count() == message.TransformsCount && message.transformsOrientations.Count() == message.TransformsCount, "Received ragdoll data count doesn't match!");
+            Debug.Assert(message.transformsPositions.Length == message.TransformsCount && message.transformsOrientations.Length == message.TransformsCount, "Received ragdoll data count doesn't match!");
             Matrix worldMatrix = Matrix.CreateFromQuaternion(message.worldOrientation);
             worldMatrix.Translation = message.worldPosition;
             Matrix[] transforms = new Matrix[message.TransformsCount];
-                        
+
             for (int i = 0; i < message.TransformsCount; ++i)
             {
                 transforms[i] = Matrix.CreateFromQuaternion(message.transformsOrientations[i]);
@@ -278,11 +231,11 @@ namespace Sandbox.Game.Multiplayer
                 var msg = new RagdollTransformsMsg();
                 msg.CharacterEntityId = Entity.EntityId;
                 msg.worldPosition = world.Translation;
-                msg.TransformsCount = localBodiesTransforms.Count();
+                msg.TransformsCount = localBodiesTransforms.Length;
                 msg.worldOrientation = Quaternion.CreateFromRotationMatrix(world.GetOrientation());
                 msg.transformsPositions = new Vector3[msg.TransformsCount];
                 msg.transformsOrientations = new Quaternion[msg.TransformsCount];
-                for (int i = 0; i < localBodiesTransforms.Count(); ++i )
+                for (int i = 0; i < localBodiesTransforms.Length; ++i)
                 {
                     msg.transformsPositions[i] = localBodiesTransforms[i].Translation;
                     msg.transformsOrientations[i] = Quaternion.CreateFromRotationMatrix(localBodiesTransforms[i].GetOrientation());
@@ -291,15 +244,20 @@ namespace Sandbox.Game.Multiplayer
             }
         }
 
+        public void SetPhysicsEnabled(bool enabled)
+        {
+            Debug.Assert(Sync.IsServer, "Only server can enable/disable physics of a character");
+            if (!Sync.IsServer) return;
 
-        private ChangeHeadOrSpineMsg m_headMsg;
-        private bool m_headDirty = false;
+            Entity.Physics.Enabled = enabled;
+            var msg = new SetCharacterPhysicsEnabledMsg();
+            msg.CharacterEntityId = Entity.EntityId;
+            msg.Enabled = enabled;
 
-        public event ChangeMovementStateDelegate MovementStateChanged;
+            Sync.Layer.SendMessageToAll(ref msg);
+        }
+
         public event SwitchCharacterModelDelegate CharacterModelSwitched;
-        public event ChangeFlagsDelegate FlagsChanged;
-        public event ChangeHeadOrSpineDelegate HeadOrSpineChanged;
-        public event DoDamageDelegate DoDamageHandler;
 
         public new MyCharacter Entity
         {
@@ -310,32 +268,6 @@ namespace Sandbox.Game.Multiplayer
             : base(character)
         {
         }
-
-        public void ChangeMovementState(MyCharacterMovementEnum state)
-        {
-            if (!MyFakes.CHARACTER_SERVER_SYNC)
-            {
-                if (ResponsibleForUpdate(this))
-                {
-                    var msg = new ChangeMovementStateMsg();
-                    msg.CharacterEntityId = Entity.EntityId;
-                    msg.MovementState = state;
-
-                    Sync.Layer.SendMessageToAll(ref msg);
-                }
-            }
-        }
-
-        private static void OnMovementStateChanged(MySyncCharacter sync, ref ChangeMovementStateMsg msg, MyNetworkClient sender)
-        {
-            if (sync.ResponsibleForUpdate(sender))
-            {
-                var handler = sync.MovementStateChanged;
-                if (handler != null)
-                    handler(msg.MovementState);
-            }
-        }
-
 
         public void SendAnimationCommand(ref MyAnimationCommand command)
         {
@@ -349,7 +281,7 @@ namespace Sandbox.Game.Multiplayer
             msg.BlendTime = command.BlendTime;
             msg.TimeScale = command.TimeScale;
 
-            Sync.Layer.SendMessageToAll(ref msg);
+            Sync.Layer.SendMessageToServer(ref msg);
         }
 
         private static void OnAnimationCommand(MySyncCharacter sync, ref AnimationCommandMsg msg, MyNetworkClient sender)
@@ -364,6 +296,10 @@ namespace Sandbox.Game.Multiplayer
                 BlendTime = msg.BlendTime,
                 TimeScale = msg.TimeScale,
             });
+            if (Sync.IsServer)
+            {
+                Sync.Layer.SendMessageToAllButOne(ref msg, sender.SteamUserId);
+            }
 
         }
 
@@ -371,215 +307,33 @@ namespace Sandbox.Game.Multiplayer
         {
             if (ResponsibleForUpdate(this))
             {
-                var msg               = new SwitchCharacterModelMsg();
+                var msg = new SwitchCharacterModelMsg();
                 msg.CharacterEntityId = Entity.EntityId;
-                msg.Model             = model;
-                msg.ColorMaskHSV      = colorMaskHSV;
+                msg.Model = model;
+                msg.ColorMaskHSV = colorMaskHSV;
 
-                Sync.Layer.SendMessageToAllAndSelf(ref msg);
+                Sync.Layer.SendMessageToServerAndSelf(ref msg);
             }
         }
 
         private static void OnSwitchCharacterModel(MySyncCharacter sync, ref SwitchCharacterModelMsg msg, MyNetworkClient sender)
         {
-            if (sync.ResponsibleForUpdate(sender))
+            if (Sync.IsServer && sync.ResponsibleForUpdate(sender))
+            {
+                var handler = sync.CharacterModelSwitched;
+                if (handler != null)
+                {
+                    handler(msg.Model, msg.ColorMaskHSV);
+                }
+                Sync.Layer.SendMessageToAllButOne(ref msg, sender.SteamUserId);
+            }
+            else if (sender.SteamUserId == Sync.ServerId || sender.SteamUserId == Sync.MyId)
             {
                 var handler = sync.CharacterModelSwitched;
                 if (handler != null)
                     handler(msg.Model, msg.ColorMaskHSV);
             }
         }
-
-        public void ChangeFlags(bool enableJetpack, bool enableDampeners, bool enableLights, bool enableIronsight, bool enableBroadcast, bool targetFromCamera)
-        {
-            if (ResponsibleForUpdate(this))
-            {
-                var msg = new ChangeFlagsMsg();
-                msg.CharacterEntityId = Entity.EntityId;
-                msg.Flags = 0;
-                msg.Flags |= enableJetpack ? CharacterFlags.Jetpack : 0;
-                msg.Flags |= enableDampeners ? CharacterFlags.Dampeners : 0;
-                msg.Flags |= enableLights ? CharacterFlags.Lights : 0;
-                msg.Flags |= enableIronsight ? CharacterFlags.Ironsight : 0;
-                msg.Flags |= enableBroadcast ? CharacterFlags.Broadcast : 0;
-                msg.Flags |= targetFromCamera ? CharacterFlags.TargetFromCamera : 0;
-
-                Sync.Layer.SendMessageToAll(ref msg);
-            }
-            else
-                if (MyFakes.CHARACTER_SERVER_SYNC && !Sync.IsServer)
-                {
-                    var msg = new ChangeFlagsMsg();
-                    msg.CharacterEntityId = Entity.EntityId;
-                    msg.Flags = 0;
-                    msg.Flags |= enableJetpack ? CharacterFlags.Jetpack : 0;
-                    msg.Flags |= enableDampeners ? CharacterFlags.Dampeners : 0;
-                    msg.Flags |= enableLights ? CharacterFlags.Lights : 0;
-                    msg.Flags |= enableIronsight ? CharacterFlags.Ironsight : 0;
-                    msg.Flags |= enableBroadcast ? CharacterFlags.Broadcast : 0;
-                    msg.Flags |= targetFromCamera ? CharacterFlags.TargetFromCamera : 0;
-
-                    Sync.Layer.SendMessageToServer(ref msg);
-                }
-        }
-
-        private static void OnFlagsChanged(MySyncCharacter sync, ref ChangeFlagsMsg msg, MyNetworkClient sender)
-        {
-            if (MyFakes.CHARACTER_SERVER_SYNC)
-            {
-                var handler = sync.FlagsChanged;
-                if (handler != null)
-                    handler(msg.EnableJetpack, msg.EnableDampeners, msg.EnableLights, msg.EnableIronsight, msg.EnableBroadcast, msg.TargetFromCamera);
-
-                if (Sync.IsServer)
-                    Sync.Layer.SendMessageToAll(ref msg);
-            }
-            else
-            if (sync.ResponsibleForUpdate(sender))
-            {
-                var handler = sync.FlagsChanged;
-                if (handler != null)
-                    handler(msg.EnableJetpack, msg.EnableDampeners, msg.EnableLights, msg.EnableIronsight, msg.EnableBroadcast, msg.TargetFromCamera);
-            }
-        }
-
-        public void ChangeHeadOrSpine(float headLocalXAngle, float headLocalYAngle, Quaternion spineRotation,
-    Quaternion headRotation, Quaternion handRotation, Quaternion upperHandRotation)
-        {
-            if (ResponsibleForUpdate(this))
-            {
-                m_headMsg.CharacterEntityId = Entity.EntityId;
-                m_headMsg.HeadLocalXAngle = headLocalXAngle;
-                m_headMsg.HeadLocalYAngle = headLocalYAngle;
-                m_headMsg.AdditionalSpineRotation = spineRotation != Quaternion.Zero ? spineRotation : m_headMsg.AdditionalSpineRotation;
-                m_headMsg.AdditionalHeadRotation = headRotation;
-                m_headMsg.AdditionalHandRotation = handRotation;
-                m_headMsg.AdditionalUpperHandRotation = upperHandRotation;
-
-                m_headDirty = true;
-                if (MyMultiplayer.Static != null)
-                {
-                    MyMultiplayer.Static.RegisterForTick(this);
-                }
-            }
-        }
-
-        private void SendHeadMsg()
-        {
-            if (MyMultiplayer.Static != null && MyMultiplayer.Static.FrameCounter - m_lastUpdateFrame > m_updateFrameCount)
-            {
-                ResetUpdateTimer();
-                Sync.Layer.SendMessageToAll(ref m_headMsg);
-                m_headDirty = false;
-            }
-            else if (MyMultiplayer.Static != null)
-            {
-                MyMultiplayer.Static.RegisterForTick(this);
-            }
-        }
-
-        private void ResetUpdateTimer()
-        {
-            if (MyMultiplayer.Static != null)
-            {
-                m_lastUpdateFrame = MyMultiplayer.Static.FrameCounter;
-            }
-        }
-
-        public override void Tick()
-        {
-            base.Tick();
-
-            if (!Entity.MarkedForClose && m_headDirty)
-            {
-                SendHeadMsg();
-            }
-        }
-
-        private static void OnCharacterInput(MySyncCharacter sync, ref CharacterInputMsg msg, MyNetworkClient sender)
-        {
-            sender.ClientFrameId = msg.ClientFrameId;
-            sync.CachedMovementState = msg;
-
-            var matrix = MatrixD.CreateFromQuaternion(msg.Orientation);
-            matrix.Translation = msg.Position;
-            sync.Entity.WorldMatrix = matrix;
-
-            if (Sync.IsServer)
-                Sync.Layer.SendMessageToAllButOne(ref msg, sender.SteamUserId);            
-        }
-
-
-        public CharacterInputMsg CachedMovementState = new CharacterInputMsg();
-
-        public void MoveAndRotate(Vector3 moveIndicator, Vector3 rotationIndicator, MyCharacterMovementFlags movementFlags)
-        {
-            bool changed = 
-                CachedMovementState.MoveIndicator != moveIndicator ||
-                CachedMovementState.RotationIndicator != rotationIndicator ||
-                CachedMovementState.MovementFlags != movementFlags;
-
-            if (MyMultiplayer.Static != null && MyMultiplayer.Static.FrameCounter - m_lastUpdateFrame > 60)
-            {  //Send input even if nothing changed, because clients can be moved by other forces and we need to sync them somehow at low framerate
-                ResetUpdateTimer();
-                changed = true;
-            }
-
-            if (changed)
-            {
-                CharacterInputMsg msg = new CharacterInputMsg();
-                msg.CharacterEntityId = Entity.EntityId;
-                msg.MoveIndicator = moveIndicator;
-                msg.RotationIndicator = rotationIndicator;
-                msg.MovementFlags = movementFlags;
-                msg.Orientation = Quaternion.CreateFromRotationMatrix(Entity.WorldMatrix);
-                msg.Position = Entity.WorldMatrix.Translation;
-                CachedMovementState = msg;
-
-                if (!Sync.IsServer)
-                    Sync.Layer.SendMessageToServer(ref msg);
-                else
-                    Sync.Layer.SendMessageToAll(ref msg);            
-            }
-        }
-
-        private static void OnHeadOrSpineChanged(MySyncCharacter sync, ref ChangeHeadOrSpineMsg msg, MyNetworkClient sender)
-        {
-            if (sync.ResponsibleForUpdate(sender))
-            {
-                var handler = sync.HeadOrSpineChanged;
-                if (handler != null)
-                    handler(msg.HeadLocalXAngle, msg.HeadLocalYAngle,
-                        msg.AdditionalSpineRotation, msg.AdditionalHeadRotation, msg.AdditionalHandRotation, msg.AdditionalUpperHandRotation);
-            }
-        }
-
-        
-
-        #region Respawn 
-
-        public static void SendCharacterCreated(MyObjectBuilder_Character character, MyCockpit cockpit)
-        {
-            MySyncCreate.SendEntityCreated(character);
-
-            AttachToCockpitMsg msg = new AttachToCockpitMsg();
-            msg.CharacterEntityId = character.EntityId;
-            msg.CockpitEntityId = cockpit.EntityId;
-
-            Sync.Layer.SendMessageToAll(msg);
-        }
-
-        static void OnAttachToCockpit(MySyncCharacter sync, ref AttachToCockpitMsg msg, MyNetworkClient sender)
-        {
-            MyCharacter character = sync.Entity;
-            MyCockpit cockpit = MyEntities.GetEntityById(msg.CockpitEntityId) as MyCockpit;
-            Debug.Assert(cockpit != null);
-            if (cockpit == null) return;
-
-            cockpit.AttachPilot(character, false);
-        }
-
-        #endregion
 
         #region Chat
         [ProtoContract]
@@ -623,7 +377,7 @@ namespace Sandbox.Game.Multiplayer
             [ProtoMember]
             public long CharacterEntityId;
             public long GetEntityId() { return CharacterEntityId; }
-         
+
             [ProtoMember]
             public long FactionId1;
             [ProtoMember]
@@ -670,7 +424,7 @@ namespace Sandbox.Game.Multiplayer
             var receiverId = MySession.Static.Players.TryGetPlayerIdentity(new MyPlayer.PlayerId(receiverSteamId));
             var senderId = MySession.Static.Players.TryGetPlayerIdentity(new MyPlayer.PlayerId(senderSteamId));
 
-            return (receiverId != null && receiverId.Character != null && senderId != null && senderId.Character != null && MyAntennaSystem.CheckConnection(senderId, receiverId));
+            return (receiverId != null && receiverId.Character != null && senderId != null && senderId.Character != null && MyAntennaSystem.Static.CheckConnection(senderId, receiverId));
         }
 
         private static void OnPlayerMessageRequest(MySyncCharacter sync, ref SendPlayerMessageMsg msg, MyNetworkClient sender)
@@ -680,23 +434,23 @@ namespace Sandbox.Game.Multiplayer
             {
                 return;
             }
-            
+
             var receiverId = MySession.Static.Players.TryGetPlayerIdentity(new MyPlayer.PlayerId(msg.ReceiverSteamId));
             var senderId = MySession.Static.Players.TryGetPlayerIdentity(new MyPlayer.PlayerId(msg.SenderSteamId));
 
             //TODO(AF) Check if message was already received
 
-            if (receiverId != null && receiverId.Character != null && senderId != null && senderId.Character != null && MyAntennaSystem.CheckConnection(senderId, receiverId))
+            if (receiverId != null && receiverId.Character != null && senderId != null && senderId.Character != null && MyAntennaSystem.Static.CheckConnection(senderId, receiverId))
             {
                 Sync.Layer.SendMessage(ref msg, msg.ReceiverSteamId, MyTransportMessageEnum.Success);
                 Sync.Layer.SendMessage(ref msg, sender.SteamUserId, MyTransportMessageEnum.Success);
 
                 //Save chat history on server for non-server players
-                if (receiverId.Character != MySession.LocalCharacter)
+                if (receiverId.Character != MySession.Static.LocalCharacter)
                 {
                     MyChatSystem.AddPlayerChatItem(receiverId.IdentityId, senderId.IdentityId, new MyPlayerChatItem(msg.Text, senderId.IdentityId, msg.Timestamp, true));
                 }
-                if (senderId.Character != MySession.LocalCharacter)
+                if (senderId.Character != MySession.Static.LocalCharacter)
                 {
                     MyChatSystem.AddPlayerChatItem(senderId.IdentityId, receiverId.IdentityId, new MyPlayerChatItem(msg.Text, senderId.IdentityId, msg.Timestamp, true));
                 }
@@ -710,7 +464,7 @@ namespace Sandbox.Game.Multiplayer
 
             if (receiverId != null && receiverId.Character != null && senderId != null && senderId.Character != null)
             {
-                if (receiverId.Character == MySession.LocalCharacter && receiverId.Character != senderId.Character)
+                if (receiverId.Character == MySession.Static.LocalCharacter && receiverId.Character != senderId.Character)
                 {
                     MyChatSystem.AddPlayerChatItem(receiverId.IdentityId, senderId.IdentityId, new MyPlayerChatItem(msg.Text, senderId.IdentityId, msg.Timestamp, true));
                     MySession.Static.ChatSystem.OnNewPlayerMessage(senderId.IdentityId, senderId.IdentityId);
@@ -732,12 +486,12 @@ namespace Sandbox.Game.Multiplayer
         public void SendNewFactionMessage(long factionId1, long factionId2, MyFactionChatItem chatItem)
         {
             var msg = new SendNewFactionMessageMsg();
-            
+
             msg.CharacterEntityId = Entity.EntityId;
             msg.FactionId1 = factionId1;
             msg.FactionId2 = factionId2;
             msg.ChatItem = chatItem.GetObjectBuilder();
-            
+
             Sync.Layer.SendMessageToServer(ref msg, MyTransportMessageEnum.Request);
         }
 
@@ -754,7 +508,7 @@ namespace Sandbox.Game.Multiplayer
                     }
                 }
             }
-            
+
             return null;
         }
 
@@ -769,10 +523,10 @@ namespace Sandbox.Game.Multiplayer
                 {
                     if (MySession.Static.Players.TryGetPlayerId(member.Value.PlayerId, out playerId) && sendToMember)
                     {
-                        Sync.Layer.SendMessage(confirmMessage, playerId.SteamId, MyTransportMessageEnum.Success);
+                        Sync.Layer.SendMessage(ref confirmMessage, playerId.SteamId, MyTransportMessageEnum.Success);
 
                         //Save chat history on server for non-server players
-                        if (member.Value.PlayerId != MySession.LocalPlayerId)
+                        if (member.Value.PlayerId != MySession.Static.LocalPlayerId)
                         {
                             ConfirmMessage(ref confirmMessage, member.Value.PlayerId);
                         }
@@ -803,7 +557,7 @@ namespace Sandbox.Game.Multiplayer
                 {
                     long receiverIdentityId = MyEntityIdentifier.ConstructId(MyEntityIdentifier.ID_OBJECT_TYPE.IDENTITY, msg.ChatItem.PlayersToSendToUniqueNumber[i]);
                     var receiverId = MySession.Static.Players.TryGetIdentity(receiverIdentityId);
-                    if (receiverId != null && receiverId.Character != null && MyAntennaSystem.CheckConnection(senderId, receiverId))
+                    if (Sync.Players.IdentityIsNpc(receiverIdentityId) == false && receiverId != null && receiverId.Character != null && MyAntennaSystem.Static.CheckConnection(senderId, receiverId))
                     {
                         m_tempValidIds.Add(receiverIdentityId);
                     }
@@ -825,12 +579,12 @@ namespace Sandbox.Game.Multiplayer
                 MyPlayer.PlayerId receiverPlayerId;
                 MySession.Static.Players.TryGetPlayerId(id, out receiverPlayerId);
                 ulong steamId = receiverPlayerId.SteamId;
-                
+
                 Sync.Layer.SendMessage(ref msg, steamId, MyTransportMessageEnum.Success);
             }
 
             //Save chat history on server for non-server players
-            if (senderId.Character != MySession.LocalCharacter)
+            if (senderId.Character != MySession.Static.LocalCharacter)
             {
                 MyChatSystem.AddFactionChatItem(senderId.IdentityId, msg.FactionId1, msg.FactionId2, chatItem);
             }
@@ -839,14 +593,14 @@ namespace Sandbox.Game.Multiplayer
         private static void OnFactionMessageSuccess(MySyncCharacter sync, ref SendNewFactionMessageMsg msg, MyNetworkClient sender)
         {
             long senderIdentityId = MyEntityIdentifier.ConstructId(MyEntityIdentifier.ID_OBJECT_TYPE.IDENTITY, msg.ChatItem.IdentityIdUniqueNumber);
-            
+
             var factionChatItem = new MyFactionChatItem();
             factionChatItem.Init(msg.ChatItem);
-            if (!(Sync.IsServer && senderIdentityId != MySession.LocalPlayerId))
+            if (!(Sync.IsServer && senderIdentityId != MySession.Static.LocalPlayerId))
             {
-                MyChatSystem.AddFactionChatItem(MySession.LocalPlayerId, msg.FactionId1, msg.FactionId2, factionChatItem);
+                MyChatSystem.AddFactionChatItem(MySession.Static.LocalPlayerId, msg.FactionId1, msg.FactionId2, factionChatItem);
             }
-            if (senderIdentityId != MySession.LocalPlayerId)
+            if (senderIdentityId != MySession.Static.LocalPlayerId)
             {
                 MySession.Static.Gpss.ScanText(factionChatItem.Text, MyTexts.GetString(MySpaceTexts.TerminalTab_GPS_NewFromFactionComms));
             }
@@ -857,7 +611,7 @@ namespace Sandbox.Game.Multiplayer
         {
             Debug.Assert(Sync.IsServer, "Faction message retries should only be done on server");
 
-            if (currentSenderIdentity.Character == null)
+            if (currentSenderIdentity == null || currentSenderIdentity.Character == null)
             {
                 return false;
             }
@@ -868,8 +622,12 @@ namespace Sandbox.Game.Multiplayer
                 if (!playerToSendTo.Value)
                 {
                     long receiverIdentityId = playerToSendTo.Key;
-                    var receiverId = MySession.Static.Players.TryGetIdentity(receiverIdentityId);
-                    if (receiverId != null && receiverId.Character != null && MyAntennaSystem.CheckConnection(currentSenderIdentity, receiverId))
+                    if (Sync.Players.IdentityIsNpc(receiverIdentityId))
+                    {
+                        continue;
+                    }
+                    MyIdentity receiverId = MySession.Static.Players.TryGetIdentity(receiverIdentityId);
+                    if (receiverId != null && receiverId.Character != null && MyAntennaSystem.Static.CheckConnection(currentSenderIdentity, receiverId))
                     {
                         m_tempValidIds.Add(receiverIdentityId);
                     }
@@ -927,7 +685,7 @@ namespace Sandbox.Game.Multiplayer
 
         private static void OnConfirmFactionMessageSuccess(MySyncCharacter syncObject, ref ConfirmFactionMessageMsg message, MyNetworkClient sender)
         {
-            ConfirmMessage(ref message, MySession.LocalPlayerId);
+            ConfirmMessage(ref message, MySession.Static.LocalPlayerId);
         }
 
         private static void ConfirmMessage(ref ConfirmFactionMessageMsg message, long localPlayerId)
@@ -979,12 +737,12 @@ namespace Sandbox.Game.Multiplayer
             foreach (var player in allPlayers)
             {
                 var receiverId = player.Identity;
-                if (receiverId != null && receiverId.Character != null && senderId != null && senderId.Character != null && MyAntennaSystem.CheckConnection(senderId, receiverId))
+                if (receiverId != null && receiverId.Character != null && senderId != null && senderId.Character != null && MyAntennaSystem.Static.CheckConnection(senderId, receiverId))
                 {
                     Sync.Layer.SendMessage(ref msg, player.Id.SteamId, MyTransportMessageEnum.Success);
 
                     //Save chat history on server for non-server players
-                    if (receiverId.Character != MySession.LocalCharacter)
+                    if (receiverId.Character != MySession.Static.LocalCharacter)
                     {
                         MyChatSystem.AddGlobalChatItem(player.Identity.IdentityId, new MyGlobalChatItem(msg.Text, senderId.IdentityId));
                     }
@@ -995,12 +753,12 @@ namespace Sandbox.Game.Multiplayer
         private static void OnGlobalMessageSuccess(MySyncCharacter sync, ref SendGlobalMessageMsg msg, MyNetworkClient sender)
         {
             var senderId = MySession.Static.Players.TryGetPlayerIdentity(new MyPlayer.PlayerId(msg.SenderSteamId));
-            if (MySession.LocalCharacter != null)
+            if (MySession.Static.LocalCharacter != null)
             {
-                MyChatSystem.AddGlobalChatItem(MySession.LocalPlayerId, new MyGlobalChatItem(msg.Text, senderId.IdentityId));
+                MyChatSystem.AddGlobalChatItem(MySession.Static.LocalPlayerId, new MyGlobalChatItem(msg.Text, senderId.IdentityId));
                 MySession.Static.ChatSystem.OnNewGlobalMessage(senderId.IdentityId);
 
-                if (MySession.LocalPlayerId != senderId.IdentityId)
+                if (MySession.Static.LocalPlayerId != senderId.IdentityId)
                 {
                     MySession.Static.Gpss.ScanText(msg.Text, MyTexts.GetString(MySpaceTexts.TerminalTab_GPS_NewFromBroadcast));
                 }
@@ -1009,6 +767,25 @@ namespace Sandbox.Game.Multiplayer
         #endregion
 
         #endregion
+
+        public void UpdateStoredGas(MyDefinitionId gasId, float fillLevel)
+        {
+            Debug.Assert(Sync.IsServer, "Should only sync stored gas from server");
+            var msg = new UpdateGasFillLevelMsg();
+            msg.CharacterEntityId = Entity.EntityId;
+            msg.GasId = gasId;
+            msg.FillLevel = fillLevel;
+            Sync.Layer.SendMessageToAll(ref msg);
+        }
+
+        private static void OnUpdateStoredGas(MySyncCharacter syncObject, ref UpdateGasFillLevelMsg message, MyNetworkClient sender)
+        {
+            if (syncObject.Entity.OxygenComponent == null)
+                return;
+
+            MyDefinitionId gasId = message.GasId;
+            syncObject.Entity.OxygenComponent.UpdateStoredGasLevel(ref gasId, message.FillLevel);
+        }
 
         public void UpdateOxygen(float oxygenAmount)
         {
@@ -1021,24 +798,28 @@ namespace Sandbox.Game.Multiplayer
 
         private static void OnUpdateOxygen(MySyncCharacter syncObject, ref UpdateOxygenMsg message, MyNetworkClient sender)
         {
-            syncObject.Entity.SuitOxygenAmount = message.OxygenAmount;
+            if (syncObject.Entity.OxygenComponent == null)
+                return;
+
+            syncObject.Entity.OxygenComponent.SuitOxygenAmount = message.OxygenAmount;
         }
 
-        public void SendRefillFromBottle()
+        public void SendRefillFromBottle(MyDefinitionId gasId)
         {
             Debug.Assert(Sync.IsServer);
 
             var msg = new RefillFromBottleMsg();
             msg.CharacterEntityId = Entity.EntityId;
-            
+            msg.GasId = gasId;
+
             Sync.Layer.SendMessageToAll(ref msg);
         }
 
         private static void OnRefillFromBottle(MySyncCharacter syncObject, ref RefillFromBottleMsg message, MyNetworkClient sender)
         {
-            if (syncObject.Entity == MySession.LocalCharacter)
+            if (syncObject.Entity == MySession.Static.LocalCharacter && syncObject.Entity.OxygenComponent != null)
             {
-                syncObject.Entity.ShowRefillFromBottleNotification();
+                syncObject.Entity.OxygenComponent.ShowRefillFromBottleNotification(message.GasId);
             }
         }
 
@@ -1064,7 +845,7 @@ namespace Sandbox.Game.Multiplayer
         {
             if (!MySandboxGame.IsDedicated)
             {
-                syncObject.Entity.StartSecondarySound(msg.SoundId, sync: false);
+                syncObject.Entity.SoundComp.StartSecondarySound(msg.SoundId, sync: false);
             }
 
             if (Sync.IsServer)

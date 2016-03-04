@@ -32,6 +32,7 @@ namespace VRageMath
         public static Vector3 Backward = new Vector3(0.0f, 0.0f, 1f);
         public static Vector3 MaxValue = new Vector3(float.MaxValue, float.MaxValue, float.MaxValue);
         public static Vector3 MinValue = new Vector3(float.MinValue, float.MinValue, float.MinValue);
+        public static Vector3 Invalid = new Vector3(float.NaN);
         /// <summary>
         /// Gets or sets the x-component of the vector.
         /// </summary>
@@ -270,7 +271,7 @@ namespace VRageMath
 
         public static Vector3 Abs(Vector3 value)
         {
-            return new Vector3(value.X < 0 ? -value.X : value.X, value.Y < 0 ? -value.Y : value.Y, value.Z < 0 ? -value.Z : value.Z);
+            return new Vector3(Math.Abs(value.X), Math.Abs(value.Y), Math.Abs(value.Z));
         }
 
         public static Vector3 Sign(Vector3 value)
@@ -584,6 +585,23 @@ namespace VRageMath
             vector3.Z = (float)value.Z * num;
             return vector3;
         }
+
+        public static bool GetNormalized(ref Vector3 value)
+        {
+            float length = (float)Math.Sqrt((double)value.X * (double)value.X + (double)value.Y * (double)value.Y + (double)value.Z * (double)value.Z);
+            if (length > 0.001f)
+            {
+                float num = 1f / length;
+                Vector3 vector3;
+                vector3.X = (float)value.X * num;
+                vector3.Y = (float)value.Y * num;
+                vector3.Z = (float)value.Z * num;
+                return true;
+            }
+
+            return false;
+        }
+
 
         /// <summary>
         /// Creates a unit vector from the specified vector, writing the result to a user-specified variable. The result is a vector one unit in length pointing in the same direction as the original vector.
@@ -1735,6 +1753,26 @@ namespace VRageMath
                 case 2: Z = value; break;
                 default: SetDim((i % 3 + 3) % 3, value); break;  // reduce to 0..2
             }
+        }
+
+        public static Vector3 Ceiling(Vector3 v)
+        {
+            return new Vector3(Math.Ceiling(v.X), Math.Ceiling(v.Y), Math.Ceiling(v.Z));
+        }
+
+        public static Vector3 Floor(Vector3 v)
+        {
+            return new Vector3(Math.Floor(v.X), Math.Floor(v.Y), Math.Floor(v.Z));
+        }
+
+        public static Vector3 Round(Vector3 v)
+        {
+            return new Vector3(Math.Round(v.X), Math.Round(v.Y), Math.Round(v.Z));
+        }
+
+        public static Vector3 Round(Vector3 v,int numDecimals)
+        {
+            return new Vector3(Math.Round(v.X, numDecimals), Math.Round(v.Y, numDecimals), Math.Round(v.Z, numDecimals));
         }
     }
 

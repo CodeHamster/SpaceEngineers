@@ -1,9 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using VRage.Components;
+using VRage.Game.Components;
 using VRage.ObjectBuilders;
 using VRage.Utils;
 using VRageMath;
@@ -89,6 +86,10 @@ namespace VRage.ModAPI
         /// Entity updated once before first frame.
         /// </summary>
         NeedsUpdateBeforeNextFrame = 1 << 17,
+
+		DrawOutsideViewDistance = 1 << 18,
+
+        Default = EntityFlags.Visible | EntityFlags.SkipIfTooSmall | EntityFlags.Save | EntityFlags.NeedsResolveCastShadow | EntityFlags.InvalidateOnMove,
     }
 
     [Flags]
@@ -127,6 +128,7 @@ namespace VRage.ModAPI
         bool MarkedForClose { get; }
         void Delete();
         bool Closed { get; }
+        bool DebugAsyncLoading { get; } // Will be eventually removed
         MyObjectBuilder_EntityBase GetObjectBuilder(bool copy = false);
         bool Save { get; set; }
         MyPersistentEntityFlags2 PersistentFlags { get; set; }

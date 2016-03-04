@@ -96,24 +96,29 @@ namespace VRage.Groups
             Node node;
             if (m_nodes.TryGetValue(nodeToRemove, out node))
             {
-                // Remove existing links
-                while (node.m_parents.Count > 0)
-                {
-                    var parentIt = node.m_parents.GetEnumerator();
-                    parentIt.MoveNext();
-                    var parent = parentIt.Current;
-                    BreakLinkInternal(parent.Key, parent.Value, node);
-                }
-                while (node.m_children.Count > 0)
-                {
-                    var childIt = node.m_children.GetEnumerator();
-                    childIt.MoveNext();
-                    var child = childIt.Current;
-                    BreakLinkInternal(child.Key, node, child.Value);
-                }
+                BreakAllLinks(node);
 
                 bool released = TryReleaseNode(node);
                 Debug.Assert(released, "Node to remove cannot be released!");
+            }
+        }
+
+        private void BreakAllLinks(Node node)
+        {
+            // Remove existing links
+            while (node.m_parents.Count > 0)
+            {
+                var parentIt = node.m_parents.GetEnumerator();
+                parentIt.MoveNext();
+                var parent = parentIt.Current;
+                BreakLinkInternal(parent.Key, parent.Value, node);
+            }
+            while (node.m_children.Count > 0)
+            {
+                var childIt = node.m_children.GetEnumerator();
+                childIt.MoveNext();
+                var child = childIt.Current;
+                BreakLinkInternal(child.Key, node, child.Value);
             }
         }
 
@@ -202,6 +207,18 @@ namespace VRage.Groups
             return false;
         }
 
+        public void BreakAllLinks(TNode node)
+        {
+            Node n;
+            if (m_nodes.TryGetValue(node, out n))
+                BreakAllLinks(n);
+        }
+
+        public Node GetNode(TNode node)
+        {
+            return m_nodes.GetValueOrDefault(node);
+        }
+
         public override bool LinkExists(long linkId, TNode parentNode, TNode childNode = null)
         {
             Node parent;
@@ -274,6 +291,11 @@ namespace VRage.Groups
         // Recalculates consistency, splits groups when disconnected and remove ophrans (Nodes with no links)
         private void RecalculateConnectivity(Node parent, Node child)
         {
+            if (parent == null || parent.Group==null || child == null || child.Group == null)
+            {
+                Debug.Fail("Null in RecalculateConnectivity");
+                return;
+            }
             try
             {
                 // When no ophran was removed
@@ -322,6 +344,7 @@ namespace VRage.Groups
             return groupA.m_members.Count >= groupB.m_members.Count;
         }
 
+        private List<Node> m_tmpList = new List<Node>();
         private void MergeGroups(Group groupA, Group groupB)
         {
             Debug.Assert(groupA != groupB, "Cannot merge group with itself");
@@ -332,17 +355,36 @@ namespace VRage.Groups
                 var tmp = groupA; groupA = groupB; groupB = tmp;
             }
 
-            foreach (var node in groupB.m_members)
+            if(m_tmpList.Capacity < groupB.m_members.Count)
+                m_tmpList.Capacity = groupB.m_members.Count;
+
+            m_tmpList.AddHashset(groupB.m_members);
+
+            foreach(var node in m_tmpList)
             {
                 // Set: Group.Members, Node.Group
                 // Keep: Node.Children (children are still the same)
 
-                // Set group to groupA
-                node.m_group = groupA;
-
+                groupB.m_members.Remove(node);
                 // Add between members of groupA
                 groupA.m_members.Add(node);
+                // Set group to groupA
+                node.m_group = groupA;
             }
+
+            m_tmpList.Clear();
+
+            //foreach (var node in groupB.m_members)
+            //{
+            //    // Set: Group.Members, Node.Group
+            //    // Keep: Node.Children (children are still the same)
+
+            //    // Set group to groupA
+            //    node.m_group = groupA;
+
+            //    // Add between members of groupA
+            //    groupA.m_members.Add(node);
+            //}
 
             // Clear members of groupB
             groupB.m_members.Clear();
@@ -353,8 +395,11 @@ namespace VRage.Groups
 
         private void AddLink(long linkId, Node parent, Node child)
         {
-            parent.m_children.Add(linkId, child);
-            child.m_parents.Add(linkId, parent);
+            //jn:TODO use infinario to log override?
+            Debug.Assert(!parent.m_children.ContainsKey(linkId));
+            Debug.Assert(!child.m_parents.ContainsKey(linkId));
+            parent.m_children[linkId] = child;
+            child.m_parents[linkId] = parent;
         }
 
         private Node GetOrCreateNode(TNode nodeData)
@@ -405,6 +450,27 @@ namespace VRage.Groups
         {
             Debug.Assert(node.m_children.Count == 0 && node.m_parents.Count == 0 && node.m_group == null && node.m_node == null, "Returning node was not cleared!");
             m_nodePool.Push(node);
+        }
+
+        public override List<TNode> GetGroupNodes(TNode nodeInGroup)
+        {
+            var g = GetGroup(nodeInGroup);
+            var list = new List<TNode>(g.Nodes.Count);
+            foreach (var node in g.Nodes)
+                list.Add(node.NodeData);
+            return list;
+        }
+
+        public override void GetGroupNodes(TNode nodeInGroup, List<TNode> result)
+        {
+            var g = GetGroup(nodeInGroup);
+            if (g != null)
+            {
+                foreach (var node in g.Nodes)
+                    result.Add(node.NodeData);
+            }
+            else
+                result.Add(nodeInGroup);
         }
     }
 }

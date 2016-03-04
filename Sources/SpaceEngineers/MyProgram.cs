@@ -119,6 +119,7 @@ namespace SpaceEngineers
                 return;
             }
 
+                    
             if (MyFakes.DETECT_LEAKS)
             {
                 //Slow down
@@ -150,6 +151,8 @@ namespace SpaceEngineers
             {
                 IMyRender renderer = null;
 
+                SpaceEngineersGame.SetupPerGameSettings();
+
                 if (MySandboxGame.IsDedicated)
                 {
                     renderer = new MyNullRender();
@@ -157,7 +160,7 @@ namespace SpaceEngineers
                 else if (MyFakes.ENABLE_DX11_RENDERER)
                 {
                     var rendererId = MySandboxGame.Config.GraphicsRenderer;
-                    if (rendererId.HasValue && rendererId.Value == SpaceEngineersGame.DirectX11RendererKey)
+                    if (rendererId == MySandboxGame.DirectX11RendererKey)
                     {
                         renderer = new MyDX11Render();
                         if (!renderer.IsSupported)
@@ -170,7 +173,7 @@ namespace SpaceEngineers
                     if (renderer == null)
                     {
                         renderer = new MyDX9Render();
-                        rendererId = SpaceEngineersGame.DirectX9RendererKey;
+                        rendererId = MySandboxGame.DirectX9RendererKey;
                     }
 
                     MySandboxGame.Config.GraphicsRenderer = rendererId;
@@ -179,6 +182,8 @@ namespace SpaceEngineers
                 {
                     renderer = new MyDX9Render();
                 }
+
+                MyFakes.ENABLE_PLANETS &= MySandboxGame.Config.GraphicsRenderer != MySandboxGame.DirectX9RendererKey;
 
                 VRageRender.MyRenderProxy.Initialize(renderer);
 
@@ -207,15 +212,21 @@ namespace SpaceEngineers
                     {
                         if (!(steamService.IsActive && steamService.OwnsGame))
                         {
-                            MessageBoxWrapper("Steam is not running!", "Please run this game from Steam." + Environment.NewLine + "(restart Steam if already running)");
-                            return;
+                            if (MyFakes.ENABLE_RUN_WITHOUT_STEAM == false)
+                            {
+                                MessageBoxWrapper("Steam is not running!", "Please run this game from Steam." + Environment.NewLine + "(restart Steam if already running)");
+                                return;
+                            }
                         }
                     }
                     else
                     {
                         if (!(steamService.IsActive && steamService.OwnsGame))
                         {
-                            MessageBoxWrapper("Steam is not running!", "Game might be unstable when run without Steam!");
+                            if (MyFakes.ENABLE_RUN_WITHOUT_STEAM == false)
+                            {
+                                MessageBoxWrapper("Steam is not running!", "Game might be unstable when run without Steam!");
+                            }
                         }
                     }
                 }
@@ -223,8 +234,6 @@ namespace SpaceEngineers
                 VRageRender.MyRenderProxy.GetRenderProfiler().EndProfilingBlock();
 
                 VRageRender.MyRenderProxy.GetRenderProfiler().StartProfilingBlock("new MySandboxGame()");
-
-                SpaceEngineersGame.SetupPerGameSettings();
 
                 VRageGameServices services = new VRageGameServices(steamService);
 

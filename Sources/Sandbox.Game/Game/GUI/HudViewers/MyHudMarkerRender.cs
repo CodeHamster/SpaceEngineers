@@ -10,6 +10,9 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using VRage;
+using VRage.Game;
+using VRage.Game.Entity;
+using VRage.Game.Gui;
 using VRage.Generics;
 using VRage.Utils;
 using VRageMath;
@@ -19,15 +22,17 @@ namespace Sandbox.Game.GUI.HudViewers
     public class MyHudMarkerRender
     {
 
-        const float MAX_ANTENNA_DRAW_DISTANCE = 500000;
+        //const float MAX_ANTENNA_DRAW_DISTANCE = 500000;
+        const double LS_METRES = 299792458.0001367;
+        const double LY_METRES = 9.460730473e+15;
 
-        static float m_friendAntennaRange = MAX_ANTENNA_DRAW_DISTANCE;
+        static float m_friendAntennaRange = MyPerGameSettings.MaxAntennaDrawDistance;
 
         public static float FriendAntennaRange 
         {
             get
             {
-                return NormalizeLog(m_friendAntennaRange, 0.1f, MAX_ANTENNA_DRAW_DISTANCE);
+                return NormalizeLog(m_friendAntennaRange, 0.1f, MyPerGameSettings.MaxAntennaDrawDistance);
             }
             set
             {
@@ -35,12 +40,12 @@ namespace Sandbox.Game.GUI.HudViewers
             }
         }
 
-        static float m_ownerAntennaRange = MAX_ANTENNA_DRAW_DISTANCE;
+        static float m_ownerAntennaRange = MyPerGameSettings.MaxAntennaDrawDistance;
         public static float OwnerAntennaRange
         {
             get
             {
-                return NormalizeLog(m_ownerAntennaRange, 0.1f, MAX_ANTENNA_DRAW_DISTANCE);
+                return NormalizeLog(m_ownerAntennaRange, 0.1f, MyPerGameSettings.MaxAntennaDrawDistance);
             }
             set
             {
@@ -48,12 +53,12 @@ namespace Sandbox.Game.GUI.HudViewers
             }
         }
 
-        static float m_enemyAntennaRange = MAX_ANTENNA_DRAW_DISTANCE;
+        static float m_enemyAntennaRange = MyPerGameSettings.MaxAntennaDrawDistance;
         public static float EnemyAntennaRange
         {
             get
             {
-                return NormalizeLog(m_enemyAntennaRange, 0.1f, MAX_ANTENNA_DRAW_DISTANCE);
+                return NormalizeLog(m_enemyAntennaRange, 0.1f, MyPerGameSettings.MaxAntennaDrawDistance);
             }
             set
             {
@@ -107,12 +112,12 @@ namespace Sandbox.Game.GUI.HudViewers
             ownerStyle = AllocateMarkerStyle(MyFontEnum.DarkBlue, MyHudTexturesEnum.DirectionIndicator, MyHudTexturesEnum.Target_me, MyHudConstants.MARKER_COLOR_WHITE);
             factionStyle = AllocateMarkerStyle(MyFontEnum.Green, MyHudTexturesEnum.DirectionIndicator, MyHudTexturesEnum.Target_friend, MyHudConstants.MARKER_COLOR_WHITE);
 
-            m_markerStylesForBlocks = new int[MyUtils.GetMaxValueFromEnum<MyRelationsBetweenPlayerAndBlock>() + 1];
-            m_markerStylesForBlocks[(int)MyRelationsBetweenPlayerAndBlock.Neutral] = neutralStyle;
-            m_markerStylesForBlocks[(int)MyRelationsBetweenPlayerAndBlock.Enemies] = enemyStyle;
-            m_markerStylesForBlocks[(int)MyRelationsBetweenPlayerAndBlock.Owner] = ownerStyle;
-            m_markerStylesForBlocks[(int)MyRelationsBetweenPlayerAndBlock.FactionShare] = factionStyle;
-            m_markerStylesForBlocks[(int)MyRelationsBetweenPlayerAndBlock.NoOwnership] = factionStyle;
+            m_markerStylesForBlocks = new int[MyUtils.GetMaxValueFromEnum<VRage.Game.MyRelationsBetweenPlayerAndBlock>() + 1];
+            m_markerStylesForBlocks[(int)VRage.Game.MyRelationsBetweenPlayerAndBlock.Neutral] = neutralStyle;
+            m_markerStylesForBlocks[(int)VRage.Game.MyRelationsBetweenPlayerAndBlock.Enemies] = enemyStyle;
+            m_markerStylesForBlocks[(int)VRage.Game.MyRelationsBetweenPlayerAndBlock.Owner] = ownerStyle;
+            m_markerStylesForBlocks[(int)VRage.Game.MyRelationsBetweenPlayerAndBlock.FactionShare] = factionStyle;
+            m_markerStylesForBlocks[(int)VRage.Game.MyRelationsBetweenPlayerAndBlock.NoOwnership] = factionStyle;
         }
 
         public int AllocateMarkerStyle(MyFontEnum font, MyHudTexturesEnum directionIcon, MyHudTexturesEnum targetIcon, Color color)
@@ -122,13 +127,13 @@ namespace Sandbox.Game.GUI.HudViewers
             return newHandle;
         }
 
-        public void OverrideStyleForRelation(MyRelationsBetweenPlayerAndBlock relation, MyFontEnum font, MyHudTexturesEnum directionIcon, MyHudTexturesEnum targetIcon, Color color)
+        public void OverrideStyleForRelation(VRage.Game.MyRelationsBetweenPlayerAndBlock relation, MyFontEnum font, MyHudTexturesEnum directionIcon, MyHudTexturesEnum targetIcon, Color color)
         {
             int handle = GetStyleForRelation(relation);
             m_markerStyles[handle] = new MyMarkerStyle(font, directionIcon, targetIcon, color);
         }
 
-        public int GetStyleForRelation(MyRelationsBetweenPlayerAndBlock relation)
+        public int GetStyleForRelation(VRage.Game.MyRelationsBetweenPlayerAndBlock relation)
         {
             return m_markerStylesForBlocks[(int)relation];
         }
@@ -140,28 +145,30 @@ namespace Sandbox.Game.GUI.HudViewers
             m_sortedMarkers.Clear();
             foreach (var entityMarker in locationMarkers.MarkerEntities)
             {
+                if (entityMarker.Value.Entity.PositionComp == null) //to draw marker entity must have position
+                    continue;
                 m_sortedMarkers.Add(entityMarker.Value);
             }
             m_sortedMarkers.Sort(m_distanceComparer);
 
             foreach (var entityMarker in m_sortedMarkers)
             {
-                MyEntity entity = entityMarker.Entity;
+                MyEntity entity = entityMarker.Entity as MyEntity;
                 if (entityMarker.ShouldDraw != null && !entityMarker.ShouldDraw())
                     continue;
 
                 float distance = (float)(MySector.MainCamera.Position - entity.PositionComp.WorldVolume.Center).Length();
-                if ((entityMarker.TargetMode == MyRelationsBetweenPlayerAndBlock.NoOwnership ||
-                     entityMarker.TargetMode == MyRelationsBetweenPlayerAndBlock.FactionShare) && m_friendAntennaRange < distance)
+                if ((entityMarker.TargetMode == VRage.Game.MyRelationsBetweenPlayerAndBlock.NoOwnership ||
+                     entityMarker.TargetMode == VRage.Game.MyRelationsBetweenPlayerAndBlock.FactionShare) && m_friendAntennaRange < distance)
                 {
                     continue;
                 }
-                if ((entityMarker.TargetMode == MyRelationsBetweenPlayerAndBlock.Neutral ||
-                    entityMarker.TargetMode == MyRelationsBetweenPlayerAndBlock.Enemies) && m_enemyAntennaRange < distance)
+                if ((entityMarker.TargetMode == VRage.Game.MyRelationsBetweenPlayerAndBlock.Neutral ||
+                    entityMarker.TargetMode == VRage.Game.MyRelationsBetweenPlayerAndBlock.Enemies) && m_enemyAntennaRange < distance)
                 {
                     continue;
                 }
-                if (entityMarker.TargetMode == MyRelationsBetweenPlayerAndBlock.Owner && m_ownerAntennaRange < distance)
+                if (entityMarker.TargetMode == VRage.Game.MyRelationsBetweenPlayerAndBlock.Owner && m_ownerAntennaRange < distance)
                 {
                     continue;
                 }
@@ -170,7 +177,7 @@ namespace Sandbox.Game.GUI.HudViewers
                 {
                     LineD raycast = new LineD(MySector.MainCamera.Position, (Vector3)entity.PositionComp.WorldVolume.Center);
                     raycast.From += raycast.Direction;
-                    var result = MyEntities.GetIntersectionWithLine(ref raycast, entity, MySession.ControlledEntity as MyEntity);
+                    var result = MyEntities.GetIntersectionWithLine(ref raycast, entity, MySession.Static.ControlledEntity as MyEntity);
                     if (result.HasValue && !(result.Value.Entity == entity ||
                                              result.Value.Entity.Parent == entity ||
                                              result.Value.Entity == entity.Parent))
@@ -194,7 +201,7 @@ namespace Sandbox.Game.GUI.HudViewers
         /// </summary>
         public void DrawLocationMarker(int styleHandle, Vector3D position, MyHudEntityParams hudParams, float targetDamageRatio, float targetArmorRatio, float alphaMultiplifier = 1f)
         {
-            if (MySession.ControlledEntity == null)
+            if (MySession.Static.ControlledEntity == null)
                 return;
 
             //  Transform point to camera space, so Z = -1 is always forward and then do projective transformation
@@ -213,7 +220,7 @@ namespace Sandbox.Game.GUI.HudViewers
 
             MyMarkerStyle markerStyle = m_markerStyles[styleHandle];
 
-            double distance = Vector3D.Distance(position, MySession.ControlledEntity.Entity.WorldMatrix.Translation);
+            double distance = Vector3D.Distance(position, MySession.Static.ControlledEntity.Entity.WorldMatrix.Translation);
             float maxDistance = hudParams.MaxDistance;
             byte colorAlphaInByte = 255;
             var hudColor = MyFakes.SHOW_FACTIONS_GUI ? markerStyle.Color : Color.White;
@@ -307,10 +314,28 @@ namespace Sandbox.Game.GUI.HudViewers
                 {
                     objectDistance.Start(markerStyle.Font, projectedPoint2D + new Vector2(0, MyHudConstants.HUD_TEXTS_OFFSET),
                         hudColor, 0.8f, MyGuiDrawAlignEnum.HORISONTAL_CENTER_AND_VERTICAL_CENTER);
-
-                    //  Create string builder with distance in metres, e.g. "123m"                    
-                    objectDistance.AppendInt32((int)Math.Round(distance));
-                    objectDistance.Append("m");
+                    
+                    // Create a string builder with the distance in metres, kilometres, light seconds or light years
+                    if (distance > LY_METRES)
+                    {
+                        objectDistance.Append(Math.Round(distance / LY_METRES, 2).ToString());
+                        objectDistance.Append("ly");
+                    }
+                    else if (distance > LS_METRES)
+                    {
+                        objectDistance.Append(Math.Round(distance / LS_METRES, 2).ToString());
+                        objectDistance.Append("ls");
+                    }
+                    else if (distance > 1000)
+                    {
+                        objectDistance.Append(Math.Round(distance / 1000, 2).ToString());
+                        objectDistance.Append("km");
+                    }
+                    else
+                    {
+                        objectDistance.Append(Math.Round(distance, 2).ToString());
+                        objectDistance.Append("m");
+                    }
                 }
             }
         }
@@ -343,12 +368,12 @@ namespace Sandbox.Game.GUI.HudViewers
 
 		static public float Normalize(float value)
 		{
-			return NormalizeLog(value, 0.1f, MAX_ANTENNA_DRAW_DISTANCE);
+            return NormalizeLog(value, 0.1f, MyPerGameSettings.MaxAntennaDrawDistance);
 		}
 
         static public float Denormalize(float value)
         {
-            return DenormalizeLog(value, 0.1f, MAX_ANTENNA_DRAW_DISTANCE);
+            return DenormalizeLog(value, 0.1f, MyPerGameSettings.MaxAntennaDrawDistance);
         }
         static private float NormalizeLog(float f, float min, float max)
         {

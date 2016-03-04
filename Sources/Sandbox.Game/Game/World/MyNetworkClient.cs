@@ -45,14 +45,14 @@ namespace Sandbox.Game.World
         public MyNetworkClient(ulong steamId)
         {
             m_steamUserId = steamId;
-            IsLocal = MySteam.UserId == steamId;
+            IsLocal = Sync.MyId == steamId;
             DisplayName = MySteam.IsActive ? MySteam.API.Friends.GetPersonaName(steamId) : "Client";
         }
 
         public MyPlayer GetPlayer(int serialId)
         {
             var controllerId = new MyPlayer.PlayerId() { SteamId = m_steamUserId, SerialId = serialId };
-            return Sync.Players.TryGetPlayerById(controllerId);
+            return Sync.Players.GetPlayerById(controllerId);
         }
     }
 }

@@ -13,8 +13,11 @@ using Sandbox.Game;
 using Sandbox.Game.Multiplayer;
 using Sandbox.Game.World;
 using SteamSDK;
+using VRage.Game;
 using VRage.Trace;
 using VRage.Utils;
+using VRage.Network;
+using VRage.Library.Utils;
 
 namespace Sandbox.Engine.Multiplayer
 {
@@ -37,8 +40,11 @@ namespace Sandbox.Engine.Multiplayer
     {
         [ProtoBuf.ProtoMember]
         public string Text;
-    }
 
+        [ProtoBuf.ProtoMember]
+        public ulong Author; // Ignored when sending message from client to server
+    }
+    
     public enum JoinResult
     {
         OK,
@@ -93,7 +99,7 @@ namespace Sandbox.Engine.Multiplayer
     #endregion
 
 
-    public abstract class MyDedicatedServerBase : MyMultiplayerBase
+    public abstract class MyDedicatedServerBase : MyMultiplayerServerBase
     {
         #region Fields
 
@@ -232,8 +238,9 @@ namespace Sandbox.Engine.Multiplayer
 
 
         protected MyDedicatedServerBase(MySyncLayer syncLayer)
-            : base(syncLayer)
+            : base(syncLayer, null)
         {
+            RegisterControlMessage<ChatMsg>(MyControlMessageEnum.Chat, OnChatMessage, MyMessagePermissions.ToServer | MyMessagePermissions.FromServer);
         }
 
         protected void Initialize(IPEndPoint serverEndpoint)
@@ -244,8 +251,8 @@ namespace Sandbox.Engine.Multiplayer
 
             HostName = "Dedicated server";
 
-            SyncLayer.RegisterMessageImmediate<ConnectedClientDataMsg>(this.OnConnectedClient, MyMessagePermissions.Any);
-            SyncLayer.RegisterMessageImmediate<AllMembersDataMsg>(OnAllMembersData, MyMessagePermissions.Any);
+            SyncLayer.RegisterMessageImmediate<ConnectedClientDataMsg>(this.OnConnectedClient, MyMessagePermissions.ToServer | MyMessagePermissions.FromServer);
+            SyncLayer.RegisterMessageImmediate<AllMembersDataMsg>(OnAllMembersData, MyMessagePermissions.ToServer | MyMessagePermissions.FromServer);
 
             m_membersCollection = new MemberCollection(m_members);
             SetMemberLimit(MaxPlayers);
@@ -355,24 +362,11 @@ namespace Sandbox.Engine.Multiplayer
 
             MyLog.Default.WriteLineAndConsole("Peer2Peer_SessionRequest " + remoteUserId);
             SteamSDK.Peer2Peer.AcceptSession(remoteUserId);
-
-            //To be able to receive messages
-            RaiseClientJoined(remoteUserId);
         }
 
         void Peer2Peer_ConnectionFailed(ulong remoteUserId, P2PSessionErrorEnum error)
         {
-            m_members.Remove(remoteUserId);
-
-            ChatMemberStateChangeEnum reason = ChatMemberStateChangeEnum.Left;
-            switch (error)
-            {
-                case P2PSessionErrorEnum.Timeout:
-                    reason = ChatMemberStateChangeEnum.Disconnected;
-                    break;
-            }
-
-            RaiseClientLeft(remoteUserId, reason);
+            MyLog.Default.WriteLineAndConsole("Peer2Peer_ConnectionFailed " + remoteUserId + ", " + error);
         }
 
         void MyDedicatedServer_ClientLeft(ulong user, ChatMemberStateChangeEnum arg2)
@@ -410,9 +404,9 @@ namespace Sandbox.Engine.Multiplayer
         {
             MyLog.Default.WriteLineAndConsole("Server ValidateAuthTicketResponse (" + response.ToString() + "), owner: " + steamOwner.ToString());
 
-            if (response == AuthSessionResponseEnum.k_EAuthSessionResponseOK)
+            if (response == AuthSessionResponseEnum.OK)
             {
-                if (MemberLimit > 0 && m_members.Count >= MemberLimit)
+                if (MemberLimit > 0 && m_members.Count - 1 >= MemberLimit) // Unfortunately, DS counds into the members, so subtract it
                 {
                     UserRejected(steamID, JoinResult.ServerFull);
                 }
@@ -439,25 +433,25 @@ namespace Sandbox.Engine.Multiplayer
                 JoinResult joinResult = JoinResult.TicketInvalid;
                 switch (response)
                 {
-                    case AuthSessionResponseEnum.k_EAuthSessionResponseAuthTicketCanceled:
+                    case AuthSessionResponseEnum.AuthTicketCanceled:
                         joinResult = JoinResult.TicketCanceled;
                         break;
-                    case AuthSessionResponseEnum.k_EAuthSessionResponseAuthTicketInvalidAlreadyUsed:
+                    case AuthSessionResponseEnum.AuthTicketInvalidAlreadyUsed:
                         joinResult = JoinResult.TicketAlreadyUsed;
                         break;
-                    case AuthSessionResponseEnum.k_EAuthSessionResponseLoggedInElseWhere:
+                    case AuthSessionResponseEnum.LoggedInElseWhere:
                         joinResult = JoinResult.LoggedInElseWhere;
                         break;
-                    case AuthSessionResponseEnum.k_EAuthSessionResponseNoLicenseOrExpired:
+                    case AuthSessionResponseEnum.NoLicenseOrExpired:
                         joinResult = JoinResult.NoLicenseOrExpired;
                         break;
-                    case AuthSessionResponseEnum.k_EAuthSessionResponseUserNotConnectedToSteam:
+                    case AuthSessionResponseEnum.UserNotConnectedToSteam:
                         joinResult = JoinResult.UserNotConnected;
                         break;
-                    case AuthSessionResponseEnum.k_EAuthSessionResponseVACBanned:
+                    case AuthSessionResponseEnum.VACBanned:
                         joinResult = JoinResult.VACBanned;
                         break;
-                    case AuthSessionResponseEnum.k_EAuthSessionResponseVACCheckTimedOut:
+                    case AuthSessionResponseEnum.VACCheckTimedOut:
                         joinResult = JoinResult.VACCheckTimedOut;
                         break;
                 }
@@ -521,20 +515,23 @@ namespace Sandbox.Engine.Multiplayer
             System.Diagnostics.Debug.Assert(!m_members.Contains(steamID));
             m_members.Add(steamID);
 
-            MyConnectedClientData clientData = m_pendingMembers[steamID];
-            m_pendingMembers.Remove(steamID);
-
-            m_memberData[steamID] = clientData;
-
-            foreach (var user in m_members)
+            MyConnectedClientData clientData;
+            if (m_pendingMembers.TryGetValue(steamID, out clientData))
             {
-                if (user != ServerId)
-                {
-                    SendClientData(user, steamID, clientData.Name, true);
+                m_pendingMembers.Remove(steamID);
+                m_memberData[steamID] = clientData;
 
-                    // CH:Note: The connecting player will get the information about other connected players from the world object builder
-                    //if (steamID != user)
-                    //    SendClientData(steamID, user, m_memberData[user].Name, false);
+
+                foreach (var user in m_members)
+                {
+                    if (user != ServerId)
+                    {
+                        SendClientData(user, steamID, clientData.Name, true);
+
+                        // CH:Note: The connecting player will get the information about other connected players from the world object builder
+                        //if (steamID != user)
+                        //    SendClientData(steamID, user, m_memberData[user].Name, false);
+                    }
                 }
             }
 
@@ -615,9 +612,13 @@ namespace Sandbox.Engine.Multiplayer
         {
             ChatMsg msg = new ChatMsg();
             msg.Text = text;
+            msg.Author = Sync.MyId;
 
-            SendControlMessageToAllAndSelf(ref msg);
+            // This will send the message to every client except message author
+            OnChatMessage(ref msg, Sync.MyId);
         }
+
+        protected abstract void OnChatMessage(ref ChatMsg msg, ulong sender);
 
         public void SendJoinResult(ulong sendTo, JoinResult joinResult, ulong adminID = 0)
         {
@@ -646,22 +647,29 @@ namespace Sandbox.Engine.Multiplayer
             //can stay not sent.
             Thread.Sleep(200);
 
-            CloseMemberSessions();
+            try
+            {
+                CloseMemberSessions();
 
-            SteamSDK.SteamServerAPI.Instance.GameServer.EnableHeartbeats(false);
+                SteamSDK.SteamServerAPI.Instance.GameServer.EnableHeartbeats(false);
 
-            base.Dispose();
+                base.Dispose();
 
-            MyLog.Default.WriteLineAndConsole("Logging off Steam...");
-            SteamSDK.SteamServerAPI.Instance.GameServer.LogOff();
+                MyLog.Default.WriteLineAndConsole("Logging off Steam...");
+                SteamSDK.SteamServerAPI.Instance.GameServer.LogOff();
 
-            MyLog.Default.WriteLineAndConsole("Shutting down server...");
-            SteamSDK.SteamServerAPI.Instance.GameServer.Shutdown();
-            MyLog.Default.WriteLineAndConsole("Done");
+                MyLog.Default.WriteLineAndConsole("Shutting down server...");
+                SteamSDK.SteamServerAPI.Instance.GameServer.Shutdown();
+                MyLog.Default.WriteLineAndConsole("Done");
 
-            SteamSDK.Peer2Peer.SessionRequest -= Peer2Peer_SessionRequest;
-            SteamSDK.Peer2Peer.ConnectionFailed -= Peer2Peer_ConnectionFailed;
-            ClientLeft -= MyDedicatedServer_ClientLeft;
+                SteamSDK.Peer2Peer.SessionRequest -= Peer2Peer_SessionRequest;
+                SteamSDK.Peer2Peer.ConnectionFailed -= Peer2Peer_ConnectionFailed;
+                ClientLeft -= MyDedicatedServer_ClientLeft;
+            }
+            catch(Exception ex)
+            {
+                MyLog.Default.WriteLineAndConsole("catch exception : " + ex.ToString());
+            }
         }
 
         public override MemberCollection Members
@@ -728,17 +736,20 @@ namespace Sandbox.Engine.Multiplayer
 
         void OnConnectedClient(ref ConnectedClientDataMsg msg, MyNetworkClient sender)
         {
+            var steamId = sender.SteamUserId;
+            RaiseClientJoined(steamId);
+
             MyLog.Default.WriteLineAndConsole("OnConnectedClient " + msg.Name + " attempt");
             System.Diagnostics.Debug.Assert(msg.Join);
 
-            if (m_members.Contains(msg.SteamID))
+            if (m_members.Contains(steamId))
             {
                 MyLog.Default.WriteLineAndConsole("Already joined");
-                SendJoinResult(msg.SteamID, JoinResult.AlreadyJoined);
+                SendJoinResult(steamId, JoinResult.AlreadyJoined);
                 return;
             }
 
-            if (MySandboxGame.ConfigDedicated.Banned.Contains(msg.SteamID))
+            if (MySandboxGame.ConfigDedicated.Banned.Contains(steamId))
             {
                 MyLog.Default.WriteLineAndConsole("User is banned by admins");
 
@@ -758,22 +769,22 @@ namespace Sandbox.Engine.Multiplayer
                 }
 
 
-                SendJoinResult(msg.SteamID, JoinResult.BannedByAdmins, adminID);
+                SendJoinResult(steamId, JoinResult.BannedByAdmins, adminID);
                 return;
             }
 
-            AuthSessionResponseEnum res = SteamSDK.SteamServerAPI.Instance.GameServer.BeginAuthSession(msg.SteamID, msg.Token);
-            if (res != AuthSessionResponseEnum.k_EAuthSessionResponseOK)
+            AuthSessionResponseEnum res = SteamSDK.SteamServerAPI.Instance.GameServer.BeginAuthSession(steamId, msg.Token);
+            if (res != AuthSessionResponseEnum.OK)
             {
                 MyLog.Default.WriteLineAndConsole("Authentication failed (" + res.ToString() + ")");
-                SendJoinResult(msg.SteamID, JoinResult.TicketInvalid);
+                SendJoinResult(steamId, JoinResult.TicketInvalid);
                 return;
             }
 
-            m_pendingMembers.Add(msg.SteamID, new MyConnectedClientData()
+            m_pendingMembers.Add(steamId, new MyConnectedClientData()
             {
                 Name = msg.Name,
-                IsAdmin = MySandboxGame.ConfigDedicated.Administrators.Contains(msg.SteamID.ToString()) || MySandboxGame.ConfigDedicated.Administrators.Contains(ConvertSteamIDFrom64(msg.SteamID)),
+                IsAdmin = MySandboxGame.ConfigDedicated.Administrators.Contains(steamId.ToString()) || MySandboxGame.ConfigDedicated.Administrators.Contains(ConvertSteamIDFrom64(steamId)),
             });
         }
 

@@ -13,7 +13,8 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Text;
-using VRage.Components;
+using VRage.Game;
+using VRage.Game.Components;
 using VRage.ModAPI;
 using VRage.Utils;
 using VRageMath;
@@ -73,8 +74,8 @@ namespace Sandbox.Game.Entities.Blocks
 
         private MyShipMergeBlock m_other;
         public MyShipMergeBlock Other { get { return m_other; } }
-        private List<MyCubeGrid> m_gridList = new List<MyCubeGrid>();
-        public int GridCount { get { return m_gridList.Count(); } }
+        private HashSet<MyCubeGrid> m_gridList = new HashSet<MyCubeGrid>();
+        public int GridCount { get { return m_gridList.Count; } }
         private Vector3 m_pos;
 
         private ushort m_frameCounter;
@@ -142,7 +143,7 @@ namespace Sandbox.Game.Entities.Blocks
 
         private void LoadDummies()
         {
-            var finalModel = Engine.Models.MyModels.GetModelOnlyDummies(BlockDefinition.Model);
+            var finalModel = VRage.Game.Models.MyModels.GetModelOnlyDummies(BlockDefinition.Model);
             foreach (var dummy in finalModel.Dummies)
             {
                 if (dummy.Key.ToLower().Contains("merge"))
@@ -160,7 +161,7 @@ namespace Sandbox.Game.Entities.Blocks
                     var detectorShape = CreateFieldShape(halfExtents);
                     Physics = new Engine.Physics.MyPhysicsBody(this, RigidBodyFlag.RBF_STATIC);
                     Physics.IsPhantom = true;
-                    Physics.CreateFromCollisionObject(detectorShape, matrix.Translation, world, null, MyPhysics.DefaultCollisionLayer);
+                    Physics.CreateFromCollisionObject(detectorShape, matrix.Translation, world, null, MyPhysics.CollisionLayers.ObjectDetectionCollisionLayer);
                     Physics.Enabled = IsWorking;
                     Physics.RigidBody.ContactPointCallbackEnabled = true;
                     detectorShape.Base.RemoveReference();
@@ -179,28 +180,32 @@ namespace Sandbox.Game.Entities.Blocks
 
         private void phantom_Leave(HkPhantomCallbackShape shape, HkRigidBody body)
         {
+            VRage.ProfilerShort.Begin("MergeLeave");
             var entities = body.GetAllEntities();
             foreach (var entity in entities)
             {
-                var other = entity as MyCubeGrid;
-                if (other == null || other.GridSizeEnum != CubeGrid.GridSizeEnum || other == this.CubeGrid)
-                    continue;
-
-                m_gridList.Remove(other);
+                m_gridList.Remove(entity as MyCubeGrid);
             }
+            entities.Clear();
+            VRage.ProfilerShort.End();
         }
 
         private void phantom_Enter(HkPhantomCallbackShape shape, HkRigidBody body)
         {
+            VRage.ProfilerShort.Begin("MergeEnter");
             var entities = body.GetAllEntities();
             foreach (var entity in entities)
             {
                 var other = entity as MyCubeGrid;
                 if (other == null || other.GridSizeEnum != CubeGrid.GridSizeEnum || other == this.CubeGrid)
                     continue;
-
-                m_gridList.Add(other);
+                if(other.Physics.RigidBody != body)
+                    continue;
+                var added = m_gridList.Add(other);
+                //Debug.Assert(added, "entity already in list");
             }
+            entities.Clear();
+            VRage.ProfilerShort.End();
         }
 
         private void CalculateMergeArea(out Vector3I minI, out Vector3I maxI)
@@ -532,6 +537,8 @@ namespace Sandbox.Game.Entities.Blocks
             }
             foreach (var other in m_gridList)
             {
+                if (other.MarkedForClose)
+                    continue;
                 Vector3I pos = Vector3I.Zero;
                 double dist = double.MaxValue;
                 LineD l = new LineD(Physics.ClusterToWorld(Physics.RigidBody.Position), Physics.ClusterToWorld(Physics.RigidBody.Position) + GetMergeNormalWorld());
@@ -598,7 +605,7 @@ namespace Sandbox.Game.Entities.Blocks
 
             var axisBPerp = block.PositionComp.LocalMatrix.GetDirectionVector(thisRightForOther);
 
-            data.SetInBodySpace(ref posA, ref posB, ref axisA, ref axisB, ref axisAPerp, ref axisBPerp);
+            data.SetInBodySpace( posA,  posB,  axisA,  axisB,  axisAPerp,  axisBPerp, CubeGrid.Physics, other.Physics);
             var data2 = new HkMalleableConstraintData();
             data2.SetData(data);
             data.ClearHandle();

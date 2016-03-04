@@ -163,12 +163,12 @@ namespace VRageRender
             RegisterComponent(new MyRenderModels());
         }
 
-        internal static void EnqueueMessage(IMyRenderMessage message, bool limitMaxQueueSize)
+        internal static void EnqueueMessage(MyRenderMessageBase message, bool limitMaxQueueSize)
         {
             SharedData.CurrentUpdateFrame.RenderInput.Add(message);
         }
 
-        internal static void EnqueueOutputMessage(IMyRenderMessage message)
+        internal static void EnqueueOutputMessage(MyRenderMessageBase message)
         {
             SharedData.RenderOutputMessageQueue.Enqueue(message);
         }

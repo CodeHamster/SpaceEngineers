@@ -1,10 +1,8 @@
 ﻿
 using System;
-using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Text;
-using VRage;
 using VRage;
 using VRage.Utils;
 using VRageMath;
@@ -46,7 +44,7 @@ namespace VRageRender
             return Vector3.One;
         }
 
-        private static void ProcessMessage(IMyRenderMessage message)
+        private static void ProcessMessage(MyRenderMessageBase message)
         {
 #if DEBUG
             ProcessMessageInternal(message);
@@ -68,7 +66,7 @@ namespace VRageRender
 
         internal static StringBuilder m_messageTracker = new StringBuilder();
 
-        private static void ProcessMessageInternal(IMyRenderMessage message)
+        private static void ProcessMessageInternal(MyRenderMessageBase message)
         {
             switch (message.MessageType)
             {
@@ -83,7 +81,7 @@ namespace VRageRender
 
                 case MyRenderMessageEnum.DrawScene:
                 {
-                    var rMessage = (IMyRenderMessage)message;
+                    var rMessage = (MyRenderMessageBase)message;
 
                     m_drawQueue.Enqueue(rMessage);
 
@@ -118,24 +116,19 @@ namespace VRageRender
                     var rMessage = (MyRenderMessageCreateRenderCharacter)message;
 
                     var actor = MyActorFactory.CreateCharacter();
-                    //actor.GetRenderable().SetModel(MyAssetsLoader.GetModel(rMessage.Model));
-                    actor.GetRenderable().SetModel(MyMeshes.GetMeshId(X.TEXT(rMessage.Model)));
+                    var renderable = actor.GetRenderable();
+                    renderable.SetModel(MyMeshes.GetMeshId(MyStringId.GetOrCompute(rMessage.Model)));
                     actor.SetMatrix(ref rMessage.WorldMatrix);
 
                     if (rMessage.ColorMaskHSV.HasValue)
                     {
                         var color = ColorFromMask(rMessage.ColorMaskHSV.Value);
-                        actor.GetRenderable().SetKeyColor(new Vector4(color, 1));
+                        renderable.SetKeyColor(new Vector4(color, 1));
                     }
 
                     actor.SetID(rMessage.ID);
-
-                    //var entity = MyComponents.CreateEntity(rMessage.ID);
-                    //MyComponents.CreateRenderable(
-                    //    entity,
-                    //    MyMeshes.GetMeshId(X.TEXT(rMessage.Model)),
-                    //    rMessage.ColorMaskHSV.HasValue ? rMessage.ColorMaskHSV.Value : Vector3.One);
-                    //MyComponents.SetMatrix(entity, ref rMessage.WorldMatrix);
+					renderable.m_additionalFlags |= MyProxiesFactory.GetRenderableProxyFlags(rMessage.Flags);
+                    renderable.m_drawFlags = MyDrawSubmesh.MySubmeshFlags.Gbuffer | MyDrawSubmesh.MySubmeshFlags.Depth;
 
                     break;
                 }
@@ -176,14 +169,18 @@ namespace VRageRender
                     var rMessage = (MyRenderMessageUpdateRenderEntity)message;
 
                     var actor = MyIDTracker<MyActor>.FindByID(rMessage.ID);
-                    if (actor != null && actor.GetRenderable() != null)
+                    if (actor == null)
+                        break;
+
+                    var renderableComponent = actor.GetRenderable();
+                    if (renderableComponent == null)
+                        break;
+
+                    if (rMessage.ColorMaskHSV.HasValue)
                     {
-                        if(rMessage.ColorMaskHSV.HasValue)
-                        {
-                            actor.GetRenderable().SetKeyColor(new Vector4(ColorFromMask(rMessage.ColorMaskHSV.Value), 0));
-                        }
-                        actor.GetRenderable().SetDithering(rMessage.Dithering);
+                        actor.GetRenderable().SetKeyColor(new Vector4(ColorFromMask(rMessage.ColorMaskHSV.Value), 0));
                     }
+                    actor.GetRenderable().SetDithering(rMessage.Dithering);
 
                     break;
                 }
@@ -227,40 +224,10 @@ namespace VRageRender
 
                     break;
                 }
-
+          
                 #endregion
 
                 #region Render objects
-
-                case MyRenderMessageEnum.CreateRenderEntity:
-                {
-                    var rMessage = (MyRenderMessageCreateRenderEntity)message;
-
-                    Matrix m = (Matrix)rMessage.WorldMatrix;
-
-                    var actor = MyActorFactory.CreateSceneObject();
-                    if (rMessage.Model != null) 
-                    {
-                        var model = MyAssetsLoader.ModelRemap.Get(rMessage.Model, rMessage.Model);
-
-                        actor.GetRenderable().SetModel(MyMeshes.GetMeshId(X.TEXT(model)));
-                        //if (MyDestructionMesh.ModelsDictionary.ContainsKey(model))
-                        //{
-                        //    //actor.GetRenderable().SetModel(MyDestructionMesh.ModelsDictionary.Get(model));
-                        //    actor.GetRenderable().SetModel(MyMeshes.GetMeshId(X.TEXT(model)));
-                        //}
-                        //else
-                        //{
-                        //    //actor.GetRenderable().SetModel(MyAssetsLoader.GetModel(model));
-                        //    actor.GetRenderable().SetModel(MyMeshes.GetMeshId(X.TEXT(model)));
-                        //}
-                    }
-
-                    actor.SetID(rMessage.ID);
-                    actor.SetMatrix(ref rMessage.WorldMatrix);
-
-                    break;
-                }
 
                 case MyRenderMessageEnum.UpdateCockpitGlass:
                 {
@@ -311,24 +278,82 @@ namespace VRageRender
                     break;
                 }
 
+				case MyRenderMessageEnum.CreateRenderEntity:
+				{
+					var rMessage = (MyRenderMessageCreateRenderEntity)message;
+
+					Matrix m = (Matrix)rMessage.WorldMatrix;
+
+					var actor = MyActorFactory.CreateSceneObject();
+					if (rMessage.Model != null)
+					{
+						var model = MyAssetsLoader.ModelRemap.Get(rMessage.Model, rMessage.Model);
+
+						actor.GetRenderable().SetModel(MyMeshes.GetMeshId(X.TEXT(model)));
+					}
+
+					actor.SetID(rMessage.ID);
+					actor.SetMatrix(ref rMessage.WorldMatrix);
+                    var renderable = actor.GetRenderable();
+
+					renderable.m_additionalFlags |= MyProxiesFactory.GetRenderableProxyFlags(rMessage.Flags);
+                    renderable.m_depthBias = rMessage.DepthBias;
+
+					break;
+				}
+
+				case MyRenderMessageEnum.CreateRenderEntityClouds:
+				{
+					var rMessage = (MyRenderMessageCreateRenderEntityClouds)message;
+
+					if (rMessage.Technique == VRage.Import.MyMeshDrawTechnique.CLOUD_LAYER)
+					{
+						MyCloudRenderer.CreateCloudLayer(
+							rMessage.ID,
+							rMessage.CenterPoint,
+							rMessage.Altitude,
+							rMessage.MinScaledAltitude,
+							rMessage.ScalingEnabled,
+							rMessage.FadeOutRelativeAltitudeStart,
+							rMessage.FadeOutRelativeAltitudeEnd,
+							rMessage.ApplyFogRelativeDistance,
+							rMessage.MaxPlanetHillRadius,
+							rMessage.Model,
+                            rMessage.Textures,
+							rMessage.RotationAxis,
+							rMessage.AngularVelocity,
+							rMessage.InitialRotation);
+					}
+
+					break;
+				}
+
                 case MyRenderMessageEnum.CreateRenderEntityAtmosphere:
                 {
                     var rMessage = (MyRenderMessageCreateRenderEntityAtmosphere)message;
 
                     if (rMessage.Technique == VRage.Import.MyMeshDrawTechnique.ATMOSPHERE) {
 
-                        //rMessage = (rMessage.AtmosphereRadius - rMessage.PlanetRadius) * 5 + rMessage.PlanetRadius;
 
-                        //rMessage.AtmosphereRadius *= 1.5f;
-                        //rMessage.WorldMatrix = MatrixD.CreateScale(1.5, 1.5, 1.5) * rMessage.WorldMatrix;
+                        float earthPlanetRadius = 6360000f;
+                        float earthAtmosphereRadius = 6420000f;
 
-                        float rescaleFactor = (rMessage.AtmosphereRadius - rMessage.PlanetRadius) / (6420 - 6360); // ratio of planet to earth radius
-                        Vector3 rayleighScattering = new Vector3(1.8e-3f, 1.35e-2f, 3.31e-2f) / rescaleFactor;
-                        Vector3 mieScattering = new Vector3(4e-3f, 4e-3f, 4e-3f) / rescaleFactor;
-                        float rayleighHeightScale = 8 * rescaleFactor;
-                        float mieHeightScale = 1.2f * rescaleFactor;
+                        float earthAtmosphereToPlanetRatio = earthAtmosphereRadius / earthPlanetRadius;
+                        float targetAtmosphereToPlanetRatio = rMessage.AtmosphereRadius / rMessage.PlanetRadius;
+                        float targetToEarthRatio = (targetAtmosphereToPlanetRatio - 1) / (earthAtmosphereToPlanetRatio - 1);
+                        earthAtmosphereRadius = earthPlanetRadius * targetAtmosphereToPlanetRatio;
+
+                        float planetScaleFactor = (rMessage.PlanetRadius) / earthPlanetRadius;
+                        float atmosphereScaleFactor = (rMessage.AtmosphereRadius - rMessage.PlanetRadius) / (rMessage.PlanetRadius * 0.5f);
                         
-                        MyAtmosphereRenderer.CreateAtmosphere(rMessage.ID, rMessage.WorldMatrix, rMessage.PlanetRadius, rMessage.AtmosphereRadius, rayleighScattering, rayleighHeightScale, mieScattering, mieHeightScale);
+                        Vector3 rayleighScattering = new Vector3(5.8e-6f, 13.5e-6f, 33.1e-6f);
+                        Vector3 mieScattering = new Vector3(2e-5f, 2e-5f, 2e-5f);
+                        float rayleighHeightScale = 8000f;
+                        float mieHeightScale = 1200f;
+
+                        MyAtmosphereRenderer.CreateAtmosphere(rMessage.ID, rMessage.WorldMatrix, earthPlanetRadius, earthAtmosphereRadius, 
+                            rayleighScattering, rayleighHeightScale, mieScattering, mieHeightScale,
+                            planetScaleFactor, atmosphereScaleFactor);
                     }
 
                     break;
@@ -368,12 +393,28 @@ namespace VRageRender
                         
                     }
                     else
-                    {
-                        if (MyClipmapFactory.ClipmapByID.ContainsKey(rMessage.ID))
+                        //if (MyLights.Get(rMessage.ID) != LightId.NULL)
+                        //{
+                        //    var light = MyLights.Get(rMessage.ID);
+                        //    var lightInfo = new MyLightInfo
+                        //    {
+                        //        Position = rMessage.WorldMatrix.Translation,
+                        //        PositionWithOffset = rMessage.WorldMatrix.Translation,
+                        //        CastsShadows = light.CastsShadows,
+                        //        ShadowsDistance = light.ShadowDistance,
+                        //        ParentGID = light.ParentGID,
+                        //        UsedInForward = true
+                        //    };
+
+                        //    MyLights.UpdateEntity(light, ref lightInfo);
+                        //}
+                        //else
                         {
-                            MyClipmapFactory.ClipmapByID[rMessage.ID].UpdateWorldMatrix(ref rMessage.WorldMatrix);
+                            if (MyClipmapFactory.ClipmapByID.ContainsKey(rMessage.ID))
+                            {
+                                MyClipmapFactory.ClipmapByID[rMessage.ID].UpdateWorldMatrix(ref rMessage.WorldMatrix);
+                            }
                         }
-                    }
 
                     //var entity = MyComponents.GetEntity(rMessage.ID);
                     //if(entity != EntityId.NULL)
@@ -429,7 +470,9 @@ namespace VRageRender
                     }
 
                     MyAtmosphereRenderer.RemoveAtmosphere(rMessage.ID);
+					MyCloudRenderer.RemoveCloud(rMessage.ID);
 
+                    MyPrimitivesRenderer.RemoveDebugMesh(rMessage.ID);
 
                     break;
                 }
@@ -491,10 +534,8 @@ namespace VRageRender
                     }
                     else
                     {
-                        Debug.Assert(handle != InstancingId.NULL, "No instance buffer with ID " + rMessage.ID);
+                       // Debug.Assert(handle != InstancingId.NULL, "No instance buffer with ID " + rMessage.ID);
                     }
-
-                    rMessage.InstanceData.Clear();
 
                     break;
                 }
@@ -516,11 +557,7 @@ namespace VRageRender
                         MyInstancing.UpdateCube(MyInstancing.Get(rMessage.ID), rMessage.InstanceData, rMessage.Capacity);
                     }
                     else
-                    {
-                        Debug.Assert(handle != InstancingId.NULL, "No instance buffer with ID " + rMessage.ID);
-                    }
-
-                    rMessage.InstanceData.Clear();
+                        Debug.Fail("No instance buffer with ID " + rMessage.ID);
 
                     break;
                 }
@@ -548,7 +585,8 @@ namespace VRageRender
 
                     break;
                 }
-                    
+
+                   
                 case MyRenderMessageEnum.CreateManualCullObject:
                 {
                     var rMessage = (MyRenderMessageCreateManualCullObject)message;
@@ -715,34 +753,51 @@ namespace VRageRender
                             }
                         }
 
-                        var r = actor.GetRenderable();
+                        var renderableComponent = actor.GetRenderable();
 
-                        if ((rMessage.Emissivity.HasValue || rMessage.DiffuseColor.HasValue) && !r.ModelProperties.ContainsKey(key))
+                        if ((rMessage.Emissivity.HasValue || rMessage.DiffuseColor.HasValue) && !renderableComponent.ModelProperties.ContainsKey(key))
                         {
-                            r.ModelProperties[key] = new MyModelProperties();
+                            renderableComponent.ModelProperties[key] = new MyModelProperties();
                         }
 
                         if(rMessage.Emissivity.HasValue)
                         {
-                            r.ModelProperties[key].Emissivity = rMessage.Emissivity.Value;
+                            renderableComponent.ModelProperties[key].Emissivity = rMessage.Emissivity.Value;
                         }
 
                         if(rMessage.DiffuseColor.HasValue)
                         {
-                            r.ModelProperties[key].ColorMul = rMessage.DiffuseColor.Value;
+                            renderableComponent.ModelProperties[key].ColorMul = rMessage.DiffuseColor.Value;
                         }
 
                         actor.MarkRenderDirty();
 
-                        if (rMessage.OutlineColor.HasValue) {
-                            MyOutline.Add(rMessage.ID, rMessage.MaterialName, rMessage.OutlineColor.Value, rMessage.OutlineVolume);
-                        }
-                        else
-                        {
-                            MyOutline.Remove(rMessage.ID, rMessage.MaterialName);
-                        }
+                        MyOutline.HandleOutline(rMessage.ID, rMessage.MaterialName, rMessage.MeshIndex, rMessage.OutlineColor, rMessage.OutlineThickness);
+                    }
 
-                        //MyOutline.Add(rMessage.ID, rMessage.MaterialName, Color.Pink, null);
+                    break;
+                }
+
+                case MyRenderMessageEnum.UpdateModelHighlight:
+                {
+                    var rMessage = (MyRenderMessageUpdateModelHighlight)message;
+
+                    var actor = MyIDTracker<MyActor>.FindByID(rMessage.ID);
+                    if (actor != null)
+                    {
+                        MyOutline.HandleOutline(rMessage.ID, rMessage.MaterialName, rMessage.SectionIndices, rMessage.OutlineColor, rMessage.Thickness);
+                    }
+
+                    break;
+                }
+
+                case MyRenderMessageEnum.UpdateColorEmissivity:
+                {
+                    var rMessage = (MyRenderMessageUpdateColorEmissivity)message;
+                    var actor = MyIDTracker<MyActor>.FindByID(rMessage.ID);
+                    if (actor != null)
+                    {
+                        actor.GetRenderable().UpdateColorEmissivity(rMessage.LOD, rMessage.MaterialName, rMessage.DiffuseColor, rMessage.Emissivity);
                     }
 
                     break;
@@ -825,6 +880,17 @@ namespace VRageRender
                     break;
                 }
 
+                case MyRenderMessageEnum.RequestScreenData:
+                {
+                    var renderMessage = (MyRenderMessageRequestScreenData)message;
+
+                    var screenData = GetScreenData((Vector2I)renderMessage.Resolution, renderMessage.PreallocatedBuffer);
+
+                    MyRenderProxy.SendReadyScreenData(renderMessage.Id, screenData, renderMessage.Resolution);
+
+                    break;
+                }
+
                 case MyRenderMessageEnum.DrawTextToMaterial:
                 {
                     var rMessage = (MyRenderMessageDrawTextToMaterial)message;
@@ -838,23 +904,19 @@ namespace VRageRender
                     var actor = MyIDTracker<MyActor>.FindByID(rMessage.RenderObjectID);
                     if (actor != null)
                     {
-                        var r = actor.GetRenderable();
+                        var renderableComponent = actor.GetRenderable();
                         var key = new MyEntityMaterialKey { LOD = 0, Material = X.TEXT(rMessage.MaterialName) };
 
-                        if (!r.ModelProperties.ContainsKey(key))
-                        {
-                            r.ModelProperties[key] = new MyModelProperties();
-                        }
+                        if (!renderableComponent.ModelProperties.ContainsKey(key))
+                            renderableComponent.ModelProperties[key] = new MyModelProperties();
                         else
-                        {
-                            r.ModelProperties[key].TextureSwaps = null;
-                        }
+                            renderableComponent.ModelProperties[key].TextureSwaps = null;
 
-                        RwTexId handle = r.ModelProperties[key].CustomRenderedTexture;
+                        RwTexId handle = renderableComponent.ModelProperties[key].CustomRenderedTexture;
                         if (handle == RwTexId.NULL && MyModelProperties.CustomTextures < MyModelProperties.MaxCustomTextures)
                         {
                            handle = MyRwTextures.CreateRenderTarget(rMessage.TextureResolution * rMessage.TextureAspectRatio, rMessage.TextureResolution, SharpDX.DXGI.Format.R8G8B8A8_UNorm_SRgb, true);
-                           r.ModelProperties[key].CustomRenderedTexture = handle;
+                           renderableComponent.ModelProperties[key].CustomRenderedTexture = handle;
                            ++MyModelProperties.CustomTextures;
                         }
 
@@ -862,7 +924,7 @@ namespace VRageRender
                         {
                             var clearColor = new SharpDX.Color4(rMessage.BackgroundColor.PackedValue);
                             clearColor.Alpha = 0;
-                            MyRender11.ImmediateContext.ClearRenderTargetView(handle.Rtv, clearColor);
+                            MyRender11.DeviceContext.ClearRenderTargetView(handle.Rtv, clearColor);
 
                             // my sprites renderer -> push state
                             MySpritesRenderer.PushState(new Vector2(rMessage.TextureResolution * rMessage.TextureAspectRatio, rMessage.TextureResolution));
@@ -878,7 +940,7 @@ namespace VRageRender
                             MySpritesRenderer.PopState();
                             
 
-                            MyRender11.ImmediateContext.GenerateMips(handle.ShaderView);
+                            MyRender11.DeviceContext.GenerateMips(handle.ShaderView);
 
                             actor.MarkRenderDirty();
                         }
@@ -913,10 +975,9 @@ namespace VRageRender
                 {
                     var rMessage = (MyRenderMessageCreateClipmap)message;
 
-                    var clipmap = new MyClipmapHandler(rMessage.ClipmapId, rMessage.ScaleGroup, rMessage.WorldMatrix, rMessage.SizeLod0);
+                    var clipmap = new MyClipmapHandler(rMessage.ClipmapId, rMessage.ScaleGroup, rMessage.WorldMatrix, rMessage.SizeLod0, rMessage.Position, rMessage.PlanetRadius, rMessage.SpherizeWithDistance, rMessage.AdditionalRenderFlags, rMessage.PrunningFunc);
                     MyClipmapFactory.ClipmapByID[rMessage.ClipmapId] = clipmap;
                     clipmap.Base.LoadContent();
-                    
 
                     break;
                 }
@@ -930,10 +991,30 @@ namespace VRageRender
                     {
                         clipmap.Base.UpdateCell(rMessage);
                     }
-
-                    rMessage.Batches.Clear();
                     break;
                 }
+
+                case MyRenderMessageEnum.UpdateMergedVoxelMesh:
+                    {
+                        var rMessage = (MyRenderMessageUpdateMergedVoxelMesh)message;
+
+                        MyClipmapHandler clipmap = MyClipmapFactory.ClipmapByID.Get(rMessage.ClipmapId);
+                        if (clipmap != null)
+                            clipmap.UpdateMergedMesh(rMessage);
+                        break;
+                    }
+
+                case MyRenderMessageEnum.ResetMergedVoxels:
+                    {
+                        var rMessage = (MyRenderMessageResetMergedVoxels)message;
+
+                        foreach(var clipmapHandler in MyClipmapFactory.ClipmapByID.Values)
+                        {
+                            if (clipmapHandler != null)
+                                clipmapHandler.ResetMergedMeshes();
+                        }
+                        break;
+                    }
 
                 case MyRenderMessageEnum.InvalidateClipmapRange:
                 {
@@ -960,6 +1041,17 @@ namespace VRageRender
                     break;
                 }
 
+
+                case MyRenderMessageEnum.UpdateRenderVoxelMaterials:
+                {
+                    var rMessage = (MyRenderMessageUpdateRenderVoxelMaterials)message;
+
+                    MyVoxelMaterials1.Set(rMessage.Materials, true);
+
+                    rMessage.Materials = null;
+
+                    break;
+                }
 
                 #endregion
 
@@ -1083,21 +1175,68 @@ namespace VRageRender
                     break;
                 }
 
+
+                case MyRenderMessageEnum.UpdateAtmosphereSettings:
+                {
+                    var rMessage = (MyRenderMessageUpdateAtmosphereSettings)message;
+
+                    MyAtmosphereRenderer.UpdateSettings(rMessage.ID, rMessage.Settings);
+
+                    break;
+                }
+
+                case MyRenderMessageEnum.EnableAtmosphere:
+                {
+                    var rMessage = (MyRenderMessageEnableAtmosphere)message;
+                    MyAtmosphereRenderer.Enabled = rMessage.Enabled;
+                    break;
+                }
+
+                case MyRenderMessageEnum.UpdatePlanetBlurSettings:
+                {
+                    var rMessage = (MyRenderMessageUpdatePlanetBlurSettings)message;
+                    MyPlanetBlur.Settings = rMessage.Settings;
+                    break;
+                }
+
+				case MyRenderMessageEnum.UpdateCloudLayerFogFlag:
+				{
+					var rMessage = (MyRenderMessageUpdateCloudLayerFogFlag)message;
+					MyCloudRenderer.DrawFog = rMessage.ShouldDrawFog;
+					break;
+				}
+
                 case MyRenderMessageEnum.UpdateRenderEnvironment:
                 {
                     var rMessage = (MyRenderMessageUpdateRenderEnvironment)message;
 
+                    if (MyEnvironment.AdditionalSunIntensities == null || MyEnvironment.AdditionalSunIntensities.Length != rMessage.AdditionalSunCount)
+                        MyEnvironment.AdditionalSunIntensities = new float[rMessage.AdditionalSunCount];
+                    if (MyEnvironment.AdditionalSunColors == null || MyEnvironment.AdditionalSunColors.Length != rMessage.AdditionalSunCount)
+                        MyEnvironment.AdditionalSunColors = new Vector3[rMessage.AdditionalSunCount];
+                    if (MyEnvironment.AdditionalSunDirections == null || MyEnvironment.AdditionalSunDirections.Length != rMessage.AdditionalSunCount)
+                        MyEnvironment.AdditionalSunDirections = new Vector2[rMessage.AdditionalSunCount];
+
                     MyEnvironment.DirectionalLightDir = VRageMath.Vector3.Normalize(rMessage.SunDirection);
                     MyEnvironment.DirectionalLightIntensity = rMessage.SunIntensity * rMessage.SunColor.ToVector3();
                     MyEnvironment.DirectionalLightEnabled = rMessage.SunLightOn;
+
+                    for (int lightIndex = 0; lightIndex < MyEnvironment.AdditionalSunIntensities.Length; ++lightIndex)
+                    {
+                        MyEnvironment.AdditionalSunIntensities[lightIndex] = rMessage.AdditionalSunIntensities[lightIndex];
+                        MyEnvironment.AdditionalSunColors[lightIndex] = rMessage.AdditionalSunColors[lightIndex];
+                        MyEnvironment.AdditionalSunDirections[lightIndex] = rMessage.AdditionalSunDirections[lightIndex];
+                    }
+
                     MyEnvironment.DayTime = (float)(rMessage.DayTime - Math.Truncate(rMessage.DayTime));
                     MyEnvironment.SunDistance = rMessage.DistanceToSun;
                     MyEnvironment.SunColor = rMessage.SunColor;
                     MyEnvironment.SunMaterial = rMessage.SunMaterial;
                     MyEnvironment.SunSizeMultiplier = rMessage.SunSizeMultiplier;
                     MyEnvironment.SunBillboardEnabled = rMessage.SunBillboardEnabled;
-
-                    var skybox = rMessage.BackgroundTexture;
+                    MyEnvironment.PlanetFactor = rMessage.PlanetFactor;
+                    MyEnvironment.DaySkybox = rMessage.BackgroundTexture;
+                    MyEnvironment.BackgroundOrientation = rMessage.BackgroundOrientation;
 
                     m_resetEyeAdaptation = m_resetEyeAdaptation || rMessage.ResetEyeAdaptation;
 
@@ -1115,6 +1254,9 @@ namespace VRageRender
 
                     m_postprocessSettings = rMessage.Settings;
 
+                    if (m_postprocessSettings.EnableEyeAdaptation != rMessage.Settings.EnableEyeAdaptation)
+                        m_resetEyeAdaptation = true;
+
                     break;
                 }
 
@@ -1122,6 +1264,7 @@ namespace VRageRender
                 {
                     var rMessage = (MyRenderMessageUpdateSSAOSettings)message;
 
+                    MyRender11.Postprocess.EnableSsao = rMessage.Enabled;
 
                     MySSAO.Params.MinRadius = rMessage.MinRadius;
                     MySSAO.Params.MaxRadius = rMessage.MaxRadius;
@@ -1131,7 +1274,9 @@ namespace VRageRender
                     MySSAO.Params.Falloff = rMessage.Falloff;
                     MySSAO.Params.Normalization = rMessage.NormValue;
                     MySSAO.Params.Contrast = rMessage.Contrast;
-                    
+
+                    MySSAO.UseBlur = rMessage.UseBlur;
+
                     break;
                 }
 
@@ -1253,6 +1398,12 @@ namespace VRageRender
                     break;
                 }
 
+                case MyRenderMessageEnum.ReloadGrass:
+                {
+                    MyRenderProxy.ReloadEffects();  // Need some delay
+                    break;
+                }
+
                 case MyRenderMessageEnum.PlayVideo:
                 {
                     var rMessage = (MyRenderMessagePlayVideo)message;
@@ -1278,6 +1429,15 @@ namespace VRageRender
                         video.Dispose();
                         MyVideoFactory.Videos.Remove(rMessage.ID);
                     }
+
+                    break;
+                }
+
+                case MyRenderMessageEnum.UpdateGameplayFrame:
+                {
+                    var rMessage = (MyRenderMessageUpdateGameplayFrame)message;
+
+                    Settings.GameplayFrame = rMessage.GameplayFrame;
 
                     break;
                 }
@@ -1334,10 +1494,18 @@ namespace VRageRender
                 }
 
                 case MyRenderMessageEnum.SwitchRenderSettings:
-                    {
-                        UpdateRenderSettings((message as MyRenderMessageSwitchRenderSettings).Settings);
-                        break;
-                    }
+                {
+                    UpdateRenderSettings((message as MyRenderMessageSwitchRenderSettings).Settings);
+                    break;
+                }
+
+                case MyRenderMessageEnum.SetMouseCapture:
+                {
+                    var umc = message as MyRenderMessageSetMouseCapture;
+
+                    MyRenderProxy.RenderThread.SetMouseCapture(umc.Capture);
+                    break;
+                }
 
                 case MyRenderMessageEnum.UnloadData:
                 {
@@ -1360,6 +1528,7 @@ namespace VRageRender
                 case MyRenderMessageEnum.DebugDrawAABB:
                 case MyRenderMessageEnum.DebugDrawAxis:
                 case MyRenderMessageEnum.DebugDrawOBB:
+                case MyRenderMessageEnum.DebugDraw6FaceConvex:
                 case MyRenderMessageEnum.DebugDrawCone:
                 case MyRenderMessageEnum.DebugDrawTriangle:
                 case MyRenderMessageEnum.DebugDrawCapsule:
@@ -1369,6 +1538,9 @@ namespace VRageRender
                 case MyRenderMessageEnum.DebugDrawTriangles:
                 case MyRenderMessageEnum.DebugDrawPlane:
                 case MyRenderMessageEnum.DebugDrawCylinder:
+                case MyRenderMessageEnum.DebugDrawFrustrum:
+                case MyRenderMessageEnum.DebugDrawMesh:
+                case MyRenderMessageEnum.DebugWaitForPresent:
                 {
                     m_debugDrawMessages.Enqueue(message);
                 }

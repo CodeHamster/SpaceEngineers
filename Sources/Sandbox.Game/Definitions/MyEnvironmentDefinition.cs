@@ -3,8 +3,10 @@ using Sandbox.Game.World;
 using System;
 using System.Collections.Generic;
 using VRage;
+using VRage.Game;
+using VRage.Game.Definitions;
 using VRageMath;
-using EnvironmentalParticleSettings = Sandbox.Common.ObjectBuilders.Definitions.MyObjectBuilder_EnvironmentDefinition.EnvironmentalParticleSettings;
+using EnvironmentalParticleSettings = VRage.Game.MyObjectBuilder_EnvironmentDefinition.EnvironmentalParticleSettings;
 
 namespace Sandbox.Definitions
 {
@@ -21,15 +23,17 @@ namespace Sandbox.Definitions
             SunIntensity = 1.456f,
             SunDiffuse = new VRageMath.Color(0.784313738f),
             SunSpecular = new VRageMath.Color(0.784313738f),
-            BackSunDiffuse = new VRageMath.Color(0.784313738f),
-            BackSunIntensity = 0.239f,
+            AdditionalSunDirection = new Vector2[] { new Vector2() },
+            AdditionalSunDiffuse = new Color[] { new Color(0.784313738f) },
+            AdditionalSunIntensity = new float[] { /*0.239f*/ 0f },
             AmbientColor = new Color(0.141176477f),
             AmbientMultiplier = 0.969f,
             EnvironmentAmbientIntensity = 0.5f,
             BackgroundColor = new Color(1.0f),
             SunMaterial = "SunDisk",
             SunSizeMultiplier = 200.0f,
-            SunDirectionNormalized = new Vector3(0.339467347f, 0.709795356f, -0.617213368f)
+            SunDirectionNormalized = new Vector3(0.339467347f, 0.709795356f, -0.617213368f),
+            BaseSunDirectionNormalized = new Vector3(0.339467347f, 0.709795356f, -0.617213368f)
         };
 
         public float LargeShipMaxSpeed = 100;
@@ -69,6 +73,18 @@ namespace Sandbox.Definitions
             get { return m_smallShipMaxAngularSpeedInRadians; }
         }
 
+        public Color ContourHighlightColor
+        {
+            get;
+            set;
+        }
+
+        public float ContourHighlightThickness
+        {
+            get;
+            set;
+        }
+
         static MyEnvironmentDefinition m_defaults = new MyEnvironmentDefinition();
         const float DELTA = 0.001f;
 
@@ -89,6 +105,8 @@ namespace Sandbox.Definitions
 			EnvironmentalParticles = objBuilder.EnvironmentalParticles;
             SmallShipMaxAngularSpeed = objBuilder.SmallShipMaxAngularSpeed;
             LargeShipMaxAngularSpeed = objBuilder.LargeShipMaxAngularSpeed;
+            ContourHighlightColor = new Color(objBuilder.ContourHighlightColor);
+            ContourHighlightThickness = objBuilder.ContourHighlightThickness;
             FogProperties.Deserialize(objBuilder);
             SunProperties.Deserialize(objBuilder);
         }
@@ -107,6 +125,9 @@ namespace Sandbox.Definitions
                     MathHelper.ToDegrees(BackgroundOrientation.Yaw),
                     MathHelper.ToDegrees(BackgroundOrientation.Pitch),
                     MathHelper.ToDegrees(BackgroundOrientation.Roll)),
+                ContourHighlightColor = this.ContourHighlightColor.ToVector4(),
+                ContourHighlightThickness = this.ContourHighlightThickness
+
             };
             FogProperties.Serialize(result);
             SunProperties.Serialize(result);
@@ -137,8 +158,17 @@ namespace Sandbox.Definitions
 			MergeSunProperties(src);
 			MergeFogProperties(src);
 
-			if(src.EnvironmentalParticles != m_defaults.EnvironmentalParticles)
-				EnvironmentalParticles = src.EnvironmentalParticles;
+			if(!src.EnvironmentalParticles.Equals(m_defaults.EnvironmentalParticles))
+			{
+				foreach(var particleEffect in src.EnvironmentalParticles)
+				{
+					if (EnvironmentalParticles.Contains(particleEffect))
+						continue;
+					EnvironmentalParticles.Add(particleEffect);
+				}
+			}
+				
+			
 
 			if (src.LargeShipMaxSpeed != m_defaults.LargeShipMaxSpeed)
 			{
@@ -156,6 +186,14 @@ namespace Sandbox.Definitions
 			{
 				LargeShipMaxAngularSpeed = src.m_largeShipMaxAngularSpeed;
 			}
+            if (src.ContourHighlightColor != m_defaults.ContourHighlightColor)
+            {
+                ContourHighlightColor = src.ContourHighlightColor;
+            }
+            if (src.ContourHighlightThickness != m_defaults.ContourHighlightThickness)
+            {
+                ContourHighlightThickness = src.ContourHighlightThickness;
+            }
 		}
 		private void MergeSunProperties(MyEnvironmentDefinition src)
 		{
@@ -174,15 +212,20 @@ namespace Sandbox.Definitions
 				SunProperties.BackgroundColor = src.SunProperties.BackgroundColor;
 			}
 
-			if (src.SunProperties.BackSunDiffuse != m_defaults.SunProperties.BackSunDiffuse)
+			if (src.SunProperties.AdditionalSunDiffuse != m_defaults.SunProperties.AdditionalSunDiffuse)
 			{
-				SunProperties.BackSunDiffuse = src.SunProperties.BackSunDiffuse;
+				SunProperties.AdditionalSunDiffuse = src.SunProperties.AdditionalSunDiffuse;
 			}
 
-			if (src.SunProperties.BackSunIntensity != m_defaults.SunProperties.BackSunIntensity)
+			if (src.SunProperties.AdditionalSunIntensity != m_defaults.SunProperties.AdditionalSunIntensity)
 			{
-				SunProperties.BackSunIntensity = src.SunProperties.BackSunIntensity;
+				SunProperties.AdditionalSunIntensity = src.SunProperties.AdditionalSunIntensity;
 			}
+
+            if (src.SunProperties.AdditionalSunDirection != m_defaults.SunProperties.AdditionalSunDirection)
+            {
+                SunProperties.AdditionalSunDirection = src.SunProperties.AdditionalSunDirection;
+            }
 
 			if (src.SunProperties.EnvironmentAmbientIntensity != m_defaults.SunProperties.EnvironmentAmbientIntensity)
 			{
@@ -250,6 +293,11 @@ namespace Sandbox.Definitions
 			{
 				FogProperties.FogColor = src.FogProperties.FogColor;
 			}
+
+            if (src.FogProperties.FogDensity != m_defaults.FogProperties.FogDensity)
+            {
+                FogProperties.FogDensity = src.FogProperties.FogDensity;
+            }
 		}
 		#endregion
     }

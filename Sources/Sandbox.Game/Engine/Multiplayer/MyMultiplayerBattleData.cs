@@ -7,6 +7,7 @@ using Sandbox.Game.Multiplayer;
 using Sandbox.Game.World;
 using SteamSDK;
 using VRage.Utils;
+using Sandbox.Engine.Networking;
 
 namespace Sandbox.Engine.Multiplayer
 {
@@ -27,6 +28,7 @@ namespace Sandbox.Engine.Multiplayer
 
         private readonly Dictionary<MyStringHash, string> m_mapKeyToValue = new Dictionary<MyStringHash, string>(MyStringHash.Comparer);
 
+        private static readonly MyStringHash BattleRemainingTimeTagHash = MyStringHash.GetOrCompute(MyMultiplayer.BattleRemainingTimeTag);
         private static readonly MyStringHash BattleCanBeJoinedTagHash = MyStringHash.GetOrCompute(MyMultiplayer.BattleCanBeJoinedTag);
         private static readonly MyStringHash BattleWorldWorkshopIdTagHash = MyStringHash.GetOrCompute(MyMultiplayer.BattleWorldWorkshopIdTag);
         private static readonly MyStringHash BattleFaction1MaxBlueprintPointsTagHash = MyStringHash.GetOrCompute(MyMultiplayer.BattleFaction1MaxBlueprintPointsTag);
@@ -41,6 +43,12 @@ namespace Sandbox.Engine.Multiplayer
         private static readonly MyStringHash BattleFaction1ReadyTagHash = MyStringHash.GetOrCompute(MyMultiplayer.BattleFaction1ReadyTag);
         private static readonly MyStringHash BattleFaction2ReadyTagHash = MyStringHash.GetOrCompute(MyMultiplayer.BattleFaction2ReadyTag);
         private static readonly MyStringHash BattleTimeLimitTagHash = MyStringHash.GetOrCompute(MyMultiplayer.BattleTimeLimitTag);
+
+        public float BattleRemainingTime
+        {
+            get { return GetFloatValue(BattleRemainingTimeTagHash, 0); }
+            set { KeyValueChangedRequest(BattleRemainingTimeTagHash, value.ToString(CultureInfo.InvariantCulture)); }
+        }
 
         public bool BattleCanBeJoined
         {
@@ -129,7 +137,7 @@ namespace Sandbox.Engine.Multiplayer
         public MyMultiplayerBattleData(MyMultiplayerBase multiplayer)
         {
             m_multiplayer = multiplayer;
-            m_multiplayer.RegisterControlMessage<KeyValueDataMsg>(MyControlMessageEnum.BattleKeyValue, OnKeyValueChanged);
+            m_multiplayer.RegisterControlMessage<KeyValueDataMsg>(MyControlMessageEnum.BattleKeyValue, OnKeyValueChanged, MyMessagePermissions.FromServer);
         }
 
         private void KeyValueChangedRequest(MyStringHash key, string value)
@@ -138,7 +146,8 @@ namespace Sandbox.Engine.Multiplayer
             msg.Key = key;
             msg.Value = value;
 
-            m_multiplayer.SendControlMessageToAllAndSelf(ref msg);
+            OnKeyValueChanged(ref msg, Sync.MyId);
+            m_multiplayer.SendControlMessageToAll(ref msg);
         }
 
         private void OnKeyValueChanged(ref KeyValueDataMsg msg, ulong sender)

@@ -1,10 +1,10 @@
 ﻿using Sandbox.Common;
-using Sandbox.Common.ObjectBuilders.Gui;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Text;
 using VRage;
+using VRage.Game;
 using VRage.Input;
 using VRage.Utils;
 using VRageMath;
@@ -210,6 +210,8 @@ namespace Sandbox.Graphics.GUI
 
         public const int INVALID_INDEX = -1;
 
+        public bool EnableSelectEmptyCell { get; set; }
+
         #region Private fields
         private Vector2 m_doubleClickFirstPosition;
         private int? m_doubleClickStarted;
@@ -218,8 +220,8 @@ namespace Sandbox.Graphics.GUI
         private bool m_isItemDraggingRight;
         private Vector2 m_mouseDragStartPosition;
 
-        private RectangleF m_itemsRectangle;
-        private Vector2 m_itemStep;
+        protected RectangleF m_itemsRectangle;
+        protected Vector2 m_itemStep;
         private readonly List<Item> m_items;
 
         private MyToolTips m_emptyItemToolTip;
@@ -244,6 +246,8 @@ namespace Sandbox.Graphics.GUI
 
             base.Name = "Grid";
             base.OriginAlign = MyGuiDrawAlignEnum.HORISONTAL_LEFT_AND_VERTICAL_TOP;
+
+            EnableSelectEmptyCell = true;
         }
 
         public override void Init(MyObjectBuilder_GuiControlBase objectBuilder)
@@ -388,7 +392,7 @@ namespace Sandbox.Graphics.GUI
             }
         }
         private MyGuiControlGridStyleEnum m_visualStyle;
-        private StyleDefinition m_styleDef;
+        protected StyleDefinition m_styleDef;
 
         private float m_itemTextScale;
         public float ItemTextScale
@@ -435,6 +439,10 @@ namespace Sandbox.Graphics.GUI
                 PrepareEventArgs(ref args, emptyIdx);
                 ItemChanged(this, args);
             }
+
+            // Recalculate row count
+            float count = (emptyIdx / this.m_columnsCount) + 1f;
+            this.RowsCount = Math.Max(this.RowsCount, (int)count);
         }
 
         public Item GetItemAt(int index)
@@ -442,7 +450,7 @@ namespace Sandbox.Graphics.GUI
             var valid = IsValidIndex(index);
             Debug.Assert(valid);
             if (!valid)
-                index = MathHelper.Clamp(index, 0, m_items.Count);
+                index = MathHelper.Clamp(index, 0, m_items.Count - 1);
             return m_items[index];
         }
 
@@ -471,11 +479,18 @@ namespace Sandbox.Graphics.GUI
                 PrepareEventArgs(ref args, index);
                 ItemChanged(this, args);
             }
+
+            // Recalculate row count
+            float count = (index / this.m_columnsCount) + 1;
+            this.RowsCount = Math.Max(this.RowsCount, (int)count);
         }
 
         public void SetItemAt(int rowIdx, int colIdx, Item item)
         {
             int index = ComputeIndex(rowIdx, colIdx);
+            if (index < 0 || index >= m_items.Count)
+                // index is out of range
+                return;
             m_items[index] = item;
             if (ItemChanged != null)
             {
@@ -483,6 +498,9 @@ namespace Sandbox.Graphics.GUI
                 PrepareEventArgs(ref args, index, rowIdx, colIdx);
                 ItemChanged(this, args);
             }
+
+            // Recalculate row count
+            this.RowsCount = Math.Max(this.RowsCount, (rowIdx + 1));
         }
 
         public void blinkSlot(int? slot)
@@ -499,15 +517,19 @@ namespace Sandbox.Graphics.GUI
         {
             for (int i = 0; i < m_items.Count; ++i)
                 m_items[i] = null;
+
+            this.RowsCount = 0;
         }
 
         /// <summary>
         /// Removes all items. This affects the size of the collection.
         /// </summary>
-        public void Clear()
+        public virtual void Clear()
         {
             m_items.Clear();
             m_selectedIndex = null;
+
+            this.RowsCount = 0;
         }
 
         /// <summary>
@@ -524,6 +546,9 @@ namespace Sandbox.Graphics.GUI
 
             if (SelectedIndex.HasValue && !IsValidIndex(SelectedIndex.Value))
                 SelectedIndex = null;
+
+            float count = (index / this.m_columnsCount) + 1;
+            this.RowsCount = Math.Max(this.RowsCount, (int)count);
         }
 
         public Item TryGetItemAt(int rowIdx, int colIdx)
@@ -540,6 +565,33 @@ namespace Sandbox.Graphics.GUI
         {
             SelectedIndex = (m_items.Count > 0) ? (int?)(m_items.Count - 1) : null;
         }
+
+        public void AddRows(int numberOfRows)
+        {
+            if (numberOfRows <= 0 || ColumnsCount <= 0)
+                return;
+
+            // fill up row to the end
+            while ((m_items.Count % ColumnsCount)!=0)
+            {
+                m_items.Add(null);
+            }
+
+            for ( int i=0; i<numberOfRows; i++ )
+            {
+                // adding of one row
+                for (int j = 0; j < ColumnsCount; j++ )
+                    m_items.Add(null);
+            }
+            RecalculateRowsCount();            
+        }
+
+        public void RecalculateRowsCount()
+        {
+            float count = m_items.Count / this.m_columnsCount;
+            this.RowsCount = Math.Max(this.RowsCount, (int)count);
+        }
+
         #endregion
 
         public override void Draw(float transitionAlpha, float backgroundTransitionAlpha)
@@ -759,7 +811,8 @@ namespace Sandbox.Graphics.GUI
                             normalizedCoord: drawPositionTopLeft,
                             normalizedSize: ItemSize,
                             color: ApplyColorMaskModifiers(ColorMask * item.IconColorMask, enabled, transitionAlpha),
-                            drawAlign: MyGuiDrawAlignEnum.HORISONTAL_LEFT_AND_VERTICAL_TOP);
+                            drawAlign: MyGuiDrawAlignEnum.HORISONTAL_LEFT_AND_VERTICAL_TOP,
+                            waitTillLoaded: false);
                         if (item.SubIcon != null && item.SubIcon!="")
                         {
                             MyGuiManager.DrawSpriteBatch(
@@ -767,7 +820,8 @@ namespace Sandbox.Graphics.GUI
                             normalizedCoord: drawPositionTopRight,
                             normalizedSize: ItemSize/3,
                             color: ApplyColorMaskModifiers(ColorMask * item.IconColorMask, enabled, transitionAlpha),
-                            drawAlign: MyGuiDrawAlignEnum.HORISONTAL_RIGHT_AND_VERTICAL_BOTTOM);
+                            drawAlign: MyGuiDrawAlignEnum.HORISONTAL_RIGHT_AND_VERTICAL_BOTTOM,
+                            waitTillLoaded: false);
                         
                         }
                         if (item.OverlayPercent != 0f)
@@ -777,7 +831,8 @@ namespace Sandbox.Graphics.GUI
                                 normalizedCoord: drawPositionTopLeft,
                                 normalizedSize: ItemSize * new Vector2(item.OverlayPercent, 1f),
                                 color: ApplyColorMaskModifiers(ColorMask * item.OverlayColorMask, enabled, transitionAlpha * 0.5f),
-                                drawAlign: MyGuiDrawAlignEnum.HORISONTAL_LEFT_AND_VERTICAL_TOP);
+                                drawAlign: MyGuiDrawAlignEnum.HORISONTAL_LEFT_AND_VERTICAL_TOP,
+                                waitTillLoaded: false);
                         }
 
                     }
@@ -789,7 +844,8 @@ namespace Sandbox.Graphics.GUI
                             normalizedCoord: drawPositionTopLeft,
                             normalizedSize: ItemSize,
                             color: ApplyColorMaskModifiers(ColorMask, enabled, transitionAlpha),
-                            drawAlign: MyGuiDrawAlignEnum.HORISONTAL_LEFT_AND_VERTICAL_TOP);
+                            drawAlign: MyGuiDrawAlignEnum.HORISONTAL_LEFT_AND_VERTICAL_TOP,
+                            waitTillLoaded: true);
                     }
 
                     if (item != null)
@@ -803,7 +859,8 @@ namespace Sandbox.Graphics.GUI
                             normalizedCoord: drawPositionTopLeft + m_itemStep * new Vector2(0.5f / 9.0f, 1 / 9.0f),
                             normalizedSize: ItemSize / 3,
                             color: ApplyColorMaskModifiers(alignIcon.Value.Color, true, transitionAlpha),
-                            drawAlign: alignIcon.Key);
+                            drawAlign: alignIcon.Key,
+                            waitTillLoaded: true);
                         }
                     }
                 }
@@ -850,7 +907,7 @@ namespace Sandbox.Graphics.GUI
             if (MyInput.Static.IsNewButtonPressed(button))
             {
                 isDragging = true;
-                m_mouseDragStartPosition = MyGuiManager.MouseCursorPosition;
+                m_mouseDragStartPosition = MyGuiManager.MouseCursorPosition;                
             }
             else if (MyInput.Static.IsButtonPressed(button))
             {
@@ -891,7 +948,17 @@ namespace Sandbox.Graphics.GUI
             if (MyInput.Static.IsAnyNewMouseOrJoystickPressed() && cursorInItems)
             {
                 if (SelectionEnabled && mouseOverIndex.HasValue)
-                    SelectedIndex = mouseOverIndex.Value;
+                {
+                    if (EnableSelectEmptyCell)
+                    {
+                        SelectedIndex = mouseOverIndex.Value;
+                    }
+                    else if (TryGetItemAt(mouseOverIndex.Value) != null)
+                    {
+                        SelectedIndex = mouseOverIndex.Value;
+                    }
+                }
+                
                 captureInput = this;
                 if (mouseOverIndex.HasValue && (ItemClicked != null || ItemClickedWithoutDoubleClick != null))
                 {
@@ -909,7 +976,8 @@ namespace Sandbox.Graphics.GUI
 
                     m_singleClickEvents = args;
 
-                    MyGuiSoundManager.PlaySound(GuiSounds.MouseClick);
+                    if(MyInput.Static.IsAnyCtrlKeyPressed() || MyInput.Static.IsAnyShiftKeyPressed())
+                        MyGuiSoundManager.PlaySound(GuiSounds.Item);
                 }
             }
 
@@ -932,6 +1000,7 @@ namespace Sandbox.Graphics.GUI
                         MakeEventArgs(out args, mouseOverIndex.Value, MySharedButtonsEnum.Primary);
                         Debug.Assert(GetItemAt(args.ItemIndex) != null, "Double click should not be reported when clicking on empty position.");
                         ItemDoubleClicked(this, args);
+                        MyGuiSoundManager.PlaySound(GuiSounds.Item);
                     }
 
                     m_doubleClickStarted = null;
@@ -1002,6 +1071,11 @@ namespace Sandbox.Graphics.GUI
                 }
             emptyIdx = 0;
             return false;
+        }
+
+        public int GetItemsCount()
+        {
+            return m_items.Count;
         }
 
         #endregion

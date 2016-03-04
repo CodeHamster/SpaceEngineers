@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using VRageMath;
 
 using Sandbox;
-using Sandbox.Graphics.TransparentGeometry.Particles;
 using Sandbox.Engine.Utils;
 using Sandbox.Engine.Platform;
 
@@ -12,12 +11,13 @@ using VRage;
 using VRage.Utils;
 using Sandbox.Definitions;
 using Sandbox.Game.World;
+using VRage.Game;
 
 namespace Sandbox.AppCode
 {
     public class MyExternalAppBase : IExternalApp
     {
-        internal static MySandboxGame Static;
+        public static MySandboxGame Static;
 
         static bool m_isEditorActive;
         public static bool IsEditorActive
@@ -52,21 +52,29 @@ namespace Sandbox.AppCode
 
             Initialize(Static);
 
-            LoadDefinitions();
+            
 
             //Sandbox.Definitions.MyDefinitionManager.Static.LoadData(new List<Sandbox.Common.ObjectBuilders.MyObjectBuilder_Checkpoint.ModItem>());
 
             //Static.In
             Static.OnGameLoaded += GameLoaded;
+            Static.OnGameExit += GameExit;
 
             //GameLoaded(this, null);
 
-            Static.Run(customRenderLoop);            
+            Static.Run(customRenderLoop);
+
+            //LoadDefinitions();
 
             if (!customRenderLoop)
             {
                 Dispose();
             }
+        }
+
+        public virtual void GameExit()
+        {
+            
         }
 
         public void Dispose()
@@ -101,7 +109,7 @@ namespace Sandbox.AppCode
         }
 
         public virtual void Initialize(Sandbox.Engine.Platform.Game game)
-        {
+        {            
         }
 
         public virtual void UpdateMainThread()
@@ -128,23 +136,30 @@ namespace Sandbox.AppCode
         {
             MyParticleEffect effect = MyParticlesLibrary.CreateParticleEffect(id);
             return effect;
-}
+        }
 
         public void RemoveParticle(MyParticleEffect effect)
         {
-            effect.Clear();
             MyParticlesLibrary.RemoveParticleEffectInstance(effect);
         }
 
         public MatrixD GetSpectatorMatrix()
         {
-            MatrixD worldMatrix = MatrixD.Invert(MySpectatorCameraController.Static.GetViewMatrix());
+            MatrixD worldMatrix;
+            if (MySpectatorCameraController.Static != null)
+                worldMatrix = MatrixD.Invert(MySpectatorCameraController.Static.GetViewMatrix());
+            else worldMatrix = MatrixD.Identity;
             return worldMatrix;
         }
 
         public MyParticleGeneration AllocateGeneration()
         {
             return MyParticlesManager.GenerationsPool.Allocate();
+        }
+
+        public MyParticleLight AllocateParticleLight()
+        {
+            return MyParticlesManager.LightsPool.Allocate();
         }
 
         public MyParticleEffect CreateLibraryEffect()
@@ -181,8 +196,6 @@ namespace Sandbox.AppCode
 
         public void LoadParticlesLibrary(string file)
         {
-			// Before Loading Particles Library the definitions need to initialized first!
-            MyDefinitionManager.Static.LoadData(new List<Sandbox.Common.ObjectBuilders.MyObjectBuilder_Checkpoint.ModItem>());
             MyParticlesLibrary.Deserialize(file);
         }
 
@@ -198,14 +211,14 @@ namespace Sandbox.AppCode
         public void LoadDefinitions()
         {
             // this is needed for render materials to be loaded
-            MyDefinitionManager.Static.LoadData(new List<Sandbox.Common.ObjectBuilders.MyObjectBuilder_Checkpoint.ModItem>());            
+            MyDefinitionManager.Static.LoadData(new List<MyObjectBuilder_Checkpoint.ModItem>());            
         }
 
 
 
         public float GetStepInSeconds()
         {
-            return MyEngineConstants.UPDATE_STEP_SIZE_IN_SECONDS;
+            return VRage.Game.MyEngineConstants.UPDATE_STEP_SIZE_IN_SECONDS;
         }
     }
 }

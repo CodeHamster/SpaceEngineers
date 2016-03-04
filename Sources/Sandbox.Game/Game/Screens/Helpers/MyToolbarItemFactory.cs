@@ -10,8 +10,12 @@ using System.Linq;
 using System.Reflection;
 using System.Text;
 using Sandbox.Common.ObjectBuilders.Definitions;
+using VRage.Game;
 using VRage.Plugins;
 using VRage.ObjectBuilders;
+using VRage.Game.Common;
+using VRage.Game.Definitions;
+using VRage.Game.Definitions.Animation;
 
 namespace Sandbox.Game.Screens.Helpers
 {
@@ -49,7 +53,13 @@ namespace Sandbox.Game.Screens.Helpers
         #region "auxiliary functions to create toolbar items"
         public static MyObjectBuilder_ToolbarItem ObjectBuilderFromDefinition(MyDefinitionBase defBase)
         {
-            if (defBase is MyPhysicalItemDefinition)
+            if (defBase is MyConsumableItemDefinition)
+            {
+                MyObjectBuilder_ToolbarItemConsumable consumableData = MyObjectBuilderSerializer.CreateNewObject<MyObjectBuilder_ToolbarItemConsumable>();
+                consumableData.DefinitionId = defBase.Id;
+                return consumableData;
+            }
+            else if ((defBase is MyPhysicalItemDefinition) && (defBase.Id.TypeId == typeof(MyObjectBuilder_PhysicalGunObject)))
             {
                 MyObjectBuilder_ToolbarItemWeapon weaponData = MyObjectBuilderSerializer.CreateNewObject<MyObjectBuilder_ToolbarItemWeapon>();
                 weaponData.DefinitionId = defBase.Id;
@@ -103,7 +113,14 @@ namespace Sandbox.Game.Screens.Helpers
 				var acData = MyObjectBuilderSerializer.CreateNewObject<MyObjectBuilder_ToolbarItemAreaMarker>();
 				acData.DefinitionId = defBase.Id;
 				return acData;
-			}
+            }
+            else if (defBase is MyGridCreateToolDefinition)
+            {
+                var gctool = MyObjectBuilderSerializer.CreateNewObject<MyObjectBuilder_ToolbarItemCreateGrid>();
+                gctool.DefinitionId = defBase.Id;
+                return gctool;
+
+            }
             return new MyObjectBuilder_ToolbarItemEmpty();
         }
 

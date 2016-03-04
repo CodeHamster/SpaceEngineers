@@ -1,11 +1,11 @@
 ﻿using VRage.ObjectBuilders;
 using ProtoBuf;
 using VRageMath;
-using System.Xml.Serialization;
 using VRage.Data;
 using System.ComponentModel;
+using System.Xml.Serialization;
 
-namespace Sandbox.Common.ObjectBuilders.Definitions
+namespace VRage.Game
 {
     [ProtoContract]
     [MyObjectBuilderDefinition]
@@ -21,6 +21,11 @@ namespace Sandbox.Common.ObjectBuilders.Definitions
         [ModdableContentFile("mwm")]
         public string Model = @"Models\Components\Sphere.mwm";
 
+        [ProtoMember]
+        [ModdableContentFile("mwm")]
+        [XmlArrayItem("Model")]
+        public string[] Models = null;
+
         [ProtoMember, DefaultValue(null)]
         public string IconSymbol = null;
         public bool ShouldSerializeIconSymbol() { return IconSymbol != null; }
@@ -31,7 +36,32 @@ namespace Sandbox.Common.ObjectBuilders.Definitions
         [ProtoMember]
         public string PhysicalMaterial;
 
+        [ProtoMember]
+        public string VoxelMaterial;
+
         [ProtoMember, DefaultValue(true)]
         public bool CanSpawnFromScreen = true;
+
+        // Adding these members to allow chaning the default orientation of the model on spawn
+        [ProtoMember]
+        public bool RotateOnSpawnX = false;
+
+        [ProtoMember]
+        public bool RotateOnSpawnY = false;
+
+        [ProtoMember]
+        public bool RotateOnSpawnZ = false;
+
+        [ProtoMember]
+        public int Health = 100;
+
+        [ProtoMember, DefaultValue(null)]
+        public SerializableDefinitionId? DestroyedPieceId = null;
+        
+        [ProtoMember]
+        public int DestroyedPieces = 0;
+
+        [ProtoMember, DefaultValue(null)]
+        public string ExtraInventoryTooltipLine = null;
     }
 }

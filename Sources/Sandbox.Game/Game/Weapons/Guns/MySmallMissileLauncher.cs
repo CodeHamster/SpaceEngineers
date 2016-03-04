@@ -14,7 +14,6 @@ using Sandbox.Game.World;
 using Sandbox.Engine.Platform.VideoMode;
 using Sandbox.Graphics.GUI;
 using Sandbox.Game.Gui;
-using Sandbox.Graphics.TransparentGeometry;
 using VRageRender;
 using Sandbox.Game.Entities.Character;
 using Sandbox.Game.Entities.Cube;
@@ -22,20 +21,25 @@ using Sandbox.Game.Entities.Cube;
 using Sandbox.Game.GameSystems.Conveyors;
 using Sandbox.Game.GameSystems;
 using System.Reflection;
-using Sandbox.Game.Weapons.Ammo;
 using Sandbox.Common;
 using System.Text;
 using MyGuiConstants = Sandbox.Graphics.GUI.MyGuiConstants;
 using Sandbox.ModAPI.Interfaces;
 using System.Diagnostics;
+using Sandbox.Game.EntityComponents;
 using Sandbox.ModAPI.Ingame;
 using Sandbox.Game.Localization;
 using VRage.ModAPI;
+using VRage.Utils;
+using VRage;
+using VRage.Game.Entity;
+using VRage.Game;
+using VRage.ModAPI.Ingame;
 
 namespace Sandbox.Game.Weapons
 {
     [MyCubeBlockType(typeof(MyObjectBuilder_SmallMissileLauncher))]
-    class MySmallMissileLauncher : MyUserControllableGun, IMyMissileGunObject, IMyPowerConsumer, IMyInventoryOwner, IMyConveyorEndpointBlock, IMyGunBaseUser, IMySmallMissileLauncher
+    class MySmallMissileLauncher : MyUserControllableGun, IMyMissileGunObject, IMyInventoryOwner, IMyConveyorEndpointBlock, IMyGunBaseUser, IMySmallMissileLauncher
     {
         protected int m_lastTimeShoot;        //  When was this gun last time shooting
 
@@ -43,19 +47,11 @@ namespace Sandbox.Game.Weapons
 
 		bool m_shoot = false;
         Vector3 m_shootDirection;
-
-        private MyInventory m_ammoInventory;
         private int m_currentBarrel;
 
         protected override bool CheckIsWorking()
         {
-            return PowerReceiver.IsPowered && base.CheckIsWorking();
-        }
-
-        public MyPowerReceiver PowerReceiver
-        {
-            get;
-            private set;
+			return ResourceSink.IsPowered && base.CheckIsWorking();
         }
 
         private MyMultilineConveyorEndpoint m_endpoint;
@@ -73,8 +69,8 @@ namespace Sandbox.Game.Weapons
         static MySmallMissileLauncher()
         {
             var useConveyor = new MyTerminalControlOnOffSwitch<MySmallMissileLauncher>("UseConveyor", MySpaceTexts.Terminal_UseConveyorSystem);
-            useConveyor.Getter = (x) => x.m_useConveyorSystem;
-            useConveyor.Setter = (x, v) => MySyncConveyors.SendChangeUseConveyorSystemRequest(x.EntityId, v);
+            useConveyor.Getter = (x) => (x).UseConveyorSystem;
+            useConveyor.Setter = (x, v) => (x).UseConveyorSystem = v;
             useConveyor.Visible = (x) => x.CubeGrid.GridSizeEnum == MyCubeSize.Large; // Only large missile launchers can use conveyor system
             useConveyor.EnableToggleAction();
             MyTerminalControlFactory.AddControl(useConveyor);
@@ -82,7 +78,10 @@ namespace Sandbox.Game.Weapons
 
         public MySmallMissileLauncher()
         {
+            m_gunBase = new MyGunBase();
             m_soundEmitter = new MyEntity3DSoundEmitter(this);
+            m_useConveyorSystem.Value = true;
+            SyncType.Append(m_gunBase);
         }
 
         //[TerminalValues(MySpaceTexts.SwitchText_On, MySpaceTexts.SwitchText_Off)]
@@ -111,39 +110,49 @@ namespace Sandbox.Game.Weapons
             SyncFlag = true;
             var ob = builder as MyObjectBuilder_SmallMissileLauncher;
            
-            m_gunBase = new MyGunBase();
-   
+ 
+            MyStringHash resourceSinkGroup;
             var weaponBlockDefinition = BlockDefinition as MyWeaponBlockDefinition;
-            if (weaponBlockDefinition != null)
+            if (weaponBlockDefinition != null && this.GetInventory() == null) 
             {
-                m_ammoInventory = new MyInventory(weaponBlockDefinition.InventoryMaxVolume, new Vector3(1.2f, 0.98f, 0.98f), MyInventoryFlags.CanReceive, this);
+                Components.Add<MyInventoryBase>(new MyInventory(weaponBlockDefinition.InventoryMaxVolume, new Vector3(1.2f, 0.98f, 0.98f), MyInventoryFlags.CanReceive, this));               
+                resourceSinkGroup = weaponBlockDefinition.ResourceSinkGroup;
             }
             else
             {
-                if (cubeGrid.GridSizeEnum == MyCubeSize.Small)
-                    m_ammoInventory = new MyInventory(240.0f / 1000, new Vector3(1.2f, 0.45f, 0.45f), MyInventoryFlags.CanReceive, this); // 4 missiles
-                else
-                    m_ammoInventory = new MyInventory(1140.0f / 1000, new Vector3(1.2f, 0.98f, 0.98f), MyInventoryFlags.CanReceive, this); // 19 missiles
+                if (this.GetInventory() == null) // this could be already inicialized object builder
+                {
+                    if (cubeGrid.GridSizeEnum == MyCubeSize.Small)
+                        Components.Add<MyInventoryBase>(new MyInventory(240.0f / 1000, new Vector3(1.2f, 0.45f, 0.45f), MyInventoryFlags.CanReceive, this)); // 4 missiles
+                    else
+                        Components.Add<MyInventoryBase>(new MyInventory(1140.0f / 1000, new Vector3(1.2f, 0.98f, 0.98f), MyInventoryFlags.CanReceive, this)); // 19 missiles
+                }
+
+                resourceSinkGroup = MyStringHash.GetOrCompute("Defense");
             }
+            Debug.Assert(this.GetInventory().Owner == this, "Ownership was not set!");
+            
+            var sinkComp = new MyResourceSinkComponent();
+            sinkComp.Init(
+                resourceSinkGroup,
+                MyEnergyConstants.MAX_REQUIRED_POWER_SHIP_GUN,
+                () => (Enabled && IsFunctional) ? ResourceSink.MaxRequiredInput : 0.0f);
+            ResourceSink = sinkComp;
+            ResourceSink.IsPoweredChanged += Receiver_IsPoweredChanged;
 
             base.Init(builder, cubeGrid);
-
-            m_ammoInventory.Init(ob.Inventory);
+            
+            if (MyFakes.ENABLE_INVENTORY_FIX)
+            {
+                FixSingleInventory();
+            }
+            ResourceSink.Update();
+            this.GetInventory().Init(ob.Inventory);
             m_gunBase.Init(ob.GunBase, BlockDefinition, this);
+	
+			AddDebugRenderComponent(new Components.MyDebugRenderComponentDrawPowerReciever(ResourceSink, this));
 
-            m_ammoInventory.ContentsChanged += m_ammoInventory_ContentsChanged;
-
-            PowerReceiver = new MyPowerReceiver(
-                MyConsumerGroupEnum.Defense, 
-                false, 
-                MyEnergyConstants.MAX_REQUIRED_POWER_SHIP_GUN, 
-                () => (Enabled && IsFunctional) ? PowerReceiver.MaxRequiredInput : 0.0f);
-            PowerReceiver.IsPoweredChanged += Receiver_IsPoweredChanged;
-            PowerReceiver.Update();
-
-            AddDebugRenderComponent(new Components.MyDebugRenderComponentDrawPowerReciever(PowerReceiver, this));
-
-            m_useConveyorSystem = ob.UseConveyorSystem;
+            m_useConveyorSystem.Value = ob.UseConveyorSystem;
 
             SlimBlock.ComponentStack.IsFunctionalChanged += ComponentStack_IsFunctionalChanged;
 
@@ -152,9 +161,30 @@ namespace Sandbox.Game.Weapons
             NeedsUpdate |= MyEntityUpdateEnum.EACH_100TH_FRAME;
         }
 
+        protected override void OnInventoryComponentAdded(MyInventoryBase inventory)
+        {
+            base.OnInventoryComponentAdded(inventory);
+            Debug.Assert(this.GetInventory() != null, "Added inventory to collector, but different type than MyInventory?! Check this.");
+            if (this.GetInventory() != null)
+            {
+                this.GetInventory().ContentsChanged += m_ammoInventory_ContentsChanged;
+            }
+        }
+
+        protected override void OnInventoryComponentRemoved(MyInventoryBase inventory)
+        {
+            base.OnInventoryComponentRemoved(inventory);
+            var removedInventory = inventory as MyInventory;
+            Debug.Assert(removedInventory != null, "Removed inventory is not MyInventory type? Check this.");
+            if (removedInventory != null)
+            {
+                removedInventory.ContentsChanged -= m_ammoInventory_ContentsChanged;
+            }
+        }
+
         private void LoadDummies()
         {
-            var finalModel = Engine.Models.MyModels.GetModelOnlyDummies(BlockDefinition.Model);
+            var finalModel = VRage.Game.Models.MyModels.GetModelOnlyDummies(BlockDefinition.Model);
             m_gunBase.LoadDummies(finalModel.Dummies);
 
             // backward compatibility for models without dummies or old dummies
@@ -183,7 +213,7 @@ namespace Sandbox.Game.Weapons
         public override MyObjectBuilder_CubeBlock GetObjectBuilderCubeBlock(bool copy = false)
         {
             var builder = (MyObjectBuilder_SmallMissileLauncher)base.GetObjectBuilderCubeBlock(copy);
-            builder.Inventory = m_ammoInventory.GetObjectBuilder();
+            builder.Inventory = this.GetInventory().GetObjectBuilder();
             builder.UseConveyorSystem = m_useConveyorSystem;
             builder.GunBase = m_gunBase.GetObjectBuilder();
             return builder;
@@ -192,23 +222,23 @@ namespace Sandbox.Game.Weapons
         protected override void OnEnabledChanged()
         {
             base.OnEnabledChanged();
-            PowerReceiver.Update();
+			ResourceSink.Update();
         }
 
         void ComponentStack_IsFunctionalChanged()
         {
-            PowerReceiver.Update();
+			ResourceSink.Update();
         }
 
         public override void OnRemovedByCubeBuilder()
         {
-            ReleaseInventory(m_ammoInventory);
+            ReleaseInventory(this.GetInventory());
             base.OnRemovedByCubeBuilder();
         }
 
         public override void OnDestroy()
         {
-            ReleaseInventory(m_ammoInventory, true);
+            ReleaseInventory(this.GetInventory(), true);
             base.OnDestroy();
         }
 
@@ -242,11 +272,11 @@ namespace Sandbox.Game.Weapons
         {
             base.UpdateBeforeSimulation100();
 
-            if (Sync.IsServer && IsFunctional && (this as IMyInventoryOwner).UseConveyorSystem)
+            if (Sync.IsServer && IsFunctional && UseConveyorSystem)
             {
-                if (MySession.Static.SurvivalMode && m_ammoInventory.VolumeFillFactor < 0.5f)
+                if (MySession.Static.SurvivalMode && this.GetInventory().VolumeFillFactor < 0.5f)
                 {
-                    MyGridConveyorSystem.ItemPullRequest(this, m_ammoInventory, OwnerId, m_gunBase.CurrentAmmoMagazineId, 1);
+                    MyGridConveyorSystem.ItemPullRequest(this, this.GetInventory(), OwnerId, m_gunBase.CurrentAmmoMagazineId, 1);
                 }
             }
         }
@@ -310,7 +340,8 @@ namespace Sandbox.Game.Weapons
 
         protected override void Closing()
         {
-            m_soundEmitter.StopSound(true);
+            if (m_soundEmitter != null)
+                m_soundEmitter.StopSound(true);
             base.Closing();
         }
 
@@ -319,65 +350,21 @@ namespace Sandbox.Game.Weapons
             base.OnAddedToScene(source); 
         }
 
-        #region IMyInventoryOwner
-
-        public int InventoryCount
-        {
-            get { return 1; }
-        }
-
-        String IMyInventoryOwner.DisplayNameText
-        {
-            get { return CustomName.ToString(); }
-        }
-
-        public MyInventory GetInventory(int i)
-        {
-            return m_ammoInventory;
-        }
-
-        public MyInventoryOwnerTypeEnum InventoryOwnerType
-        {
-            get { return MyInventoryOwnerTypeEnum.System; }
-        }
-
-        protected bool m_useConveyorSystem = true;
-        bool IMyInventoryOwner.UseConveyorSystem
-        {
-            get
-            {
-                return m_useConveyorSystem;
-            }
-            set
-            {
-                m_useConveyorSystem = value;
-            }
-        }
-
+        #region Inventory
+        
+        protected Sync<bool> m_useConveyorSystem;
         public bool UseConveyorSystem
         {
-            get 
+            get
             {
                 return m_useConveyorSystem;
             }
-        }
-
-        Sandbox.ModAPI.Interfaces.IMyInventory ModAPI.Interfaces.IMyInventoryOwner.GetInventory(int index)
-        {
-            return GetInventory(index);
-        }
-
-        bool ModAPI.Interfaces.IMyInventoryOwner.UseConveyorSystem
-        {
-            get
-            {
-                return (this as IMyInventoryOwner).UseConveyorSystem;
-            }
             set
             {
-                (this as IMyInventoryOwner).UseConveyorSystem = value;
+                m_useConveyorSystem.Value = value;
             }
         }
+
         #endregion
 
         public int GetAmmunitionAmount()
@@ -416,7 +403,7 @@ namespace Sandbox.Game.Weapons
                 status = MyGunStatusEnum.AccessDenied;
                 return false;
             }
-            if (!PowerReceiver.IsPowered)
+			if (!ResourceSink.IsPowered)
             {
                 status = MyGunStatusEnum.OutOfPower;
                 return false;
@@ -552,7 +539,7 @@ namespace Sandbox.Game.Weapons
 
         MyInventory IMyGunBaseUser.AmmoInventory
         {
-            get { return m_ammoInventory; }
+            get { return this.GetInventory(); }
         }
 
         long IMyGunBaseUser.OwnerId
@@ -578,5 +565,41 @@ namespace Sandbox.Game.Weapons
         {
             Shoot(MyShootActionEnum.PrimaryAction, direction, null);
         }
+
+        #region IMyInventoryOwner implementation
+
+        int IMyInventoryOwner.InventoryCount
+        {
+            get { return InventoryCount; }
+        }
+
+        long IMyInventoryOwner.EntityId
+        {
+            get { return EntityId; }
+        }
+
+        bool IMyInventoryOwner.HasInventory
+        {
+            get { return HasInventory; }
+        }
+
+        bool IMyInventoryOwner.UseConveyorSystem
+        {
+            get
+            {
+                return UseConveyorSystem;
+            }
+            set
+            {
+                UseConveyorSystem = value;
+            }
+        }
+
+        IMyInventory IMyInventoryOwner.GetInventory(int index)
+        {
+            return MyEntityExtensions.GetInventory(this, index);
+        }
+
+        #endregion
     }
 }
